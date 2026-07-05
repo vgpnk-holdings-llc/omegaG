@@ -69,6 +69,11 @@ pub struct ButtonsConfig {
     pub share: String,
     pub options: String,
     pub touchpad: String,
+    pub cross: String,
+    pub circle: String,
+    pub triangle: String,
+    pub l3: String,
+    pub r3: String,
 }
 
 impl Default for ButtonsConfig {
@@ -81,6 +86,11 @@ impl Default for ButtonsConfig {
             share: "".into(),                 // unmapped
             options: "".into(),               // unmapped
             touchpad: "".into(),              // unmapped
+            cross: "enter".into(),
+            circle: "escape".into(),
+            triangle: "tab".into(),
+            l3: "ctrl+t".into(),
+            r3: "ctrl+u".into(),
         }
     }
 }

@@ -60,22 +60,22 @@ Keybinds are detected automatically on launch (one WSL round-trip). Everything i
 
 | Button | Action |
 |---|---|
-| Cross (×) | Enter |
-| Circle (○) | Escape |
-| Triangle (△) | Tab |
 | D-pad | Arrow keys (hold to repeat) |
 | Right stick | Scroll (vertical + horizontal) |
 | Left stick / Touchpad | Mouse cursor (mode toggled in tray) |
 | Touchpad press | Mouse left-click |
 | L2 (hold) | Ctrl+Win — Wispr push-to-talk |
-| L3 | Ctrl+T |
-| R3 | Ctrl+U (clear line) |
 | Mute | Toggle system microphone (DualSense only) |
 
 ### Configurable (`[buttons]` in config.toml)
 
 | Button | Default |
 |---|---|
+| Cross (×) | enter |
+| Circle (○) | escape |
+| Triangle (△) | tab |
+| L3 | ctrl+t |
+| R3 | ctrl+u (clear line) |
 | L1 | tmux: previous-window |
 | R1 | tmux: next-window |
 | R2 | tmux: kill-window |

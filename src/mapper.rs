@@ -1,21 +1,19 @@
 /// Button mapper: translates UnifiedInput → keyboard/mouse events via SendInput.
 ///
-/// Fixed mappings (always active):
+/// Fixed mappings (always active, not user-configurable):
 ///   D-pad Up/Down/Left/Right → Arrow keys (two-frame confirm + repeat)
-///   Cross    → Enter
-///   Circle   → Escape
-///   Triangle → Tab
 ///   Left stick  → Mouse cursor (velocity-based, configurable sensitivity)
 ///   Right stick → Mouse scroll wheel (vertical + horizontal)
 ///   L2       → Ctrl+Win (hold)
-///   L3       → Ctrl+T
-///   R3       → Ctrl+U (clear line)
 ///
 /// Configurable mappings ([buttons] in config.toml — L1, R1, R2, Square,
-/// Share, Options, Touchpad) resolve at startup to a key sequence, from a
-/// tmux action name (prefix + detected key), a Claude Code action name
-/// (detected from ~/.claude/keybindings.json), or a direct key combo.
-/// Defaults: L1/R1 → prev/next tmux window, R2 → kill-window, Square → new-window.
+/// Share, Options, Touchpad, Cross, Circle, Triangle, L3, R3) resolve at
+/// startup to a key sequence, from a tmux action name (prefix + detected
+/// key), a Claude Code action name (detected from ~/.claude/keybindings.json),
+/// or a direct key combo.
+/// Defaults: L1/R1 → prev/next tmux window, R2 → kill-window, Square →
+/// new-window, Cross → Enter, Circle → Escape, Triangle → Tab, L3 → Ctrl+T,
+/// R3 → Ctrl+U.
 ///
 /// Combos are sent atomically in a single SendInput call.
 
@@ -254,6 +252,11 @@ struct ButtonMap {
     share: Option<KeySeq>,
     options: Option<KeySeq>,
     touchpad: Option<KeySeq>,
+    cross: Option<KeySeq>,
+    circle: Option<KeySeq>,
+    triangle: Option<KeySeq>,
+    l3: Option<KeySeq>,
+    r3: Option<KeySeq>,
 }
 
 impl Default for ButtonMap {
@@ -329,6 +332,11 @@ impl ButtonMap {
             share: resolve(&buttons.share),
             options: resolve(&buttons.options),
             touchpad: resolve(&buttons.touchpad),
+            cross: resolve(&buttons.cross),
+            circle: resolve(&buttons.circle),
+            triangle: resolve(&buttons.triangle),
+            l3: resolve(&buttons.l3),
+            r3: resolve(&buttons.r3),
         }
     }
 }
@@ -428,25 +436,11 @@ impl MapperState {
         let mut actions = Vec::new();
         let now = Instant::now();
 
-        // --- Face buttons: rising edge only ---
-        macro_rules! on_press {
-            ($field:ident, $action:expr) => {
-                if current.$field && !self.prev.$field {
-                    actions.push($action);
-                }
-            };
-        }
-
         // --- Touchpad: touch → cursor movement, click → left mouse button (always active) ---
         self.process_touchpad(input, &mut actions);
 
         // --- Left stick → mouse cursor (always active) ---
         self.process_stick_mouse(input, &mut actions);
-
-        // --- Always active face buttons ---
-        on_press!(cross, Action::KeyCombo(vec![VKey::Return]));
-        on_press!(circle, Action::KeyCombo(vec![VKey::Escape]));
-        on_press!(triangle, Action::KeyCombo(vec![VKey::Tab]));
 
         // --- Fixed key mappings ---
         // L2: hold Ctrl+Win while button is held
@@ -455,8 +449,6 @@ impl MapperState {
         } else if !current.l2 && self.prev.l2 {
             actions.push(Action::KeyUp(vec![VKey::Control, VKey::Win]));
         }
-        on_press!(l3, Action::KeyCombo(vec![VKey::Control, VKey::T]));
-        on_press!(r3, Action::KeyCombo(vec![VKey::Control, VKey::U]));
 
         // --- Configurable button mappings ---
         macro_rules! on_press_mapped {
@@ -475,6 +467,11 @@ impl MapperState {
         on_press_mapped!(square);
         on_press_mapped!(share);
         on_press_mapped!(options);
+        on_press_mapped!(cross);
+        on_press_mapped!(circle);
+        on_press_mapped!(triangle);
+        on_press_mapped!(l3);
+        on_press_mapped!(r3);
         // Touchpad press is a mouse click while touchpad-mouse is enabled;
         // with it disabled the touchpad button becomes a mappable button.
         if !self.touchpad_enabled {
@@ -1129,6 +1126,50 @@ mod tests {
             actions.iter().any(|a| matches!(a, Action::KeyCombo(k) if *k == vec![VKey::Control, VKey::T])),
             "L3 should send Ctrl+T"
         );
+    }
+
+    #[test]
+    fn cross_default_sends_enter_through_mapped_path() {
+        let mut mapper = MapperState::default();
+        let input = input_with(|i| i.buttons.cross = true);
+        let actions = mapper.update(&input);
+        assert!(
+            actions.iter().any(|a| matches!(a, Action::KeyCombo(k) if *k == vec![VKey::Return])),
+            "Default cross should resolve to Enter via the configurable mapping"
+        );
+    }
+
+    #[test]
+    fn cross_override_resolves_to_direct_combo() {
+        let mut cfg = crate::config::Config::default();
+        cfg.buttons.cross = "ctrl+g".into();
+        let mut mapper = MapperState::new(
+            &cfg,
+            &Detected::default(),
+            Arc::new(AtomicBool::new(false)),
+        );
+
+        let input = input_with(|i| i.buttons.cross = true);
+        let actions = mapper.update(&input);
+        assert!(
+            actions.iter().any(|a| matches!(a, Action::KeyCombo(k) if *k == vec![VKey::Control, VKey::G])),
+            "Overridden cross mapping should resolve to Ctrl+G"
+        );
+    }
+
+    #[test]
+    fn cross_empty_string_is_unmapped() {
+        let mut cfg = crate::config::Config::default();
+        cfg.buttons.cross = "".into();
+        let mut mapper = MapperState::new(
+            &cfg,
+            &Detected::default(),
+            Arc::new(AtomicBool::new(false)),
+        );
+
+        let input = input_with(|i| i.buttons.cross = true);
+        let actions = mapper.update(&input);
+        assert!(actions.is_empty(), "Empty cross config should be unmapped");
     }
 
     #[test]
