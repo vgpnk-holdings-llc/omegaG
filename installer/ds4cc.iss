@@ -5,7 +5,7 @@
 ;   3. Press Compile — output lands in installer\output\DS4CC-Setup.exe
 
 #define MyAppName      "DS4CC"
-#define MyAppVersion   "2.6.5"
+#define MyAppVersion   "3.0.0"
 #define MyAppPublisher "VeigaPunk"
 #define MyAppURL       "https://github.com/VeigaPunk/DS4CC"
 #define MyAppExe       "ds4cc.exe"
@@ -72,7 +72,7 @@ Name: "wisprflow";  Description: "Open the Wispr Flow download page after instal
 
 ; ── Files ──────────────────────────────────────────────────────────────
 [Files]
-Source: "..\target\release\{#MyAppExe}"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\target\x86_64-pc-windows-gnu\release\{#MyAppExe}"; DestDir: "{app}"; Flags: ignoreversion
 
 ; ── Icons (Start Menu + optional desktop) ──────────────────────────────
 [Icons]

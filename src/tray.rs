@@ -1,6 +1,4 @@
-/// System tray icon: DualSense PNG silhouette, luminance-tinted per profile.
-/// White on OLED black = Default profile.
-/// Neon green on OLED black = Tmux profile.
+/// System tray icon: DualSense PNG silhouette, luminance-tinted neon green.
 ///
 /// Right-click context menu:
 ///   Open Wispr Flow
@@ -10,9 +8,8 @@
 ///   Exit
 ///
 /// Runs on a dedicated OS thread with a Win32 message pump.
-/// The async runtime sends [`TrayCmd`] messages to update the icon.
+/// The async runtime sends [`TrayCmd`] messages to update menu state.
 
-use crate::mapper::Profile;
 use std::path::PathBuf;
 use std::sync::{Arc, atomic::{AtomicBool, Ordering}, mpsc};
 
@@ -31,24 +28,23 @@ const REG_RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
 
 /// Commands from the async runtime to the tray thread.
 pub enum TrayCmd {
-    SetProfile(Profile),
     SetStickMode(bool),
 }
 
 /// Spawn the tray icon on a background thread. Returns a channel sender.
-pub fn spawn(initial: Profile, mouse_stick_active: Arc<AtomicBool>) -> mpsc::Sender<TrayCmd> {
+pub fn spawn(mouse_stick_active: Arc<AtomicBool>) -> mpsc::Sender<TrayCmd> {
     let (tx, rx) = mpsc::channel();
     std::thread::Builder::new()
         .name("tray".into())
-        .spawn(move || run(rx, initial, mouse_stick_active))
+        .spawn(move || run(rx, mouse_stick_active))
         .expect("spawn tray thread");
     tx
 }
 
-fn run(rx: mpsc::Receiver<TrayCmd>, initial: Profile, mouse_stick_active: Arc<AtomicBool>) {
+fn run(rx: mpsc::Receiver<TrayCmd>, mouse_stick_active: Arc<AtomicBool>) {
     let auto_start_enabled = is_auto_start_enabled();
     let stick_initially = mouse_stick_active.load(Ordering::Relaxed);
-    let (r, g, b) = profile_color(initial);
+    let (r, g, b) = ICON_COLOR;
     let icon = make_icon(r, g, b);
 
     // Build context menu
@@ -80,7 +76,7 @@ fn run(rx: mpsc::Receiver<TrayCmd>, initial: Profile, mouse_stick_active: Arc<At
     menu.append(&exit_item).expect("menu append");
 
     let tray = match TrayIconBuilder::new()
-        .with_tooltip(format!("DS4CC — {initial}"))
+        .with_tooltip("DS4CC")
         .with_icon(icon)
         .with_menu(Box::new(menu))
         .build()
@@ -91,8 +87,10 @@ fn run(rx: mpsc::Receiver<TrayCmd>, initial: Profile, mouse_stick_active: Arc<At
             return;
         }
     };
+    // Keep the tray icon alive for the lifetime of this thread.
+    let _tray = tray;
 
-    log::info!("Tray icon created (profile: {initial}, auto-start: {auto_start_enabled})");
+    log::info!("Tray icon created (auto-start: {auto_start_enabled})");
 
     loop {
         // Pump Win32 messages so the tray icon stays responsive.
@@ -144,11 +142,6 @@ fn run(rx: mpsc::Receiver<TrayCmd>, initial: Profile, mouse_stick_active: Arc<At
         }
 
         match rx.try_recv() {
-            Ok(TrayCmd::SetProfile(profile)) => {
-                let (r, g, b) = profile_color(profile);
-                let _ = tray.set_icon(Some(make_icon(r, g, b)));
-                let _ = tray.set_tooltip(Some(format!("DS4CC — {profile}")));
-            }
             Ok(TrayCmd::SetStickMode(stick)) => {
                 stick_item.set_checked(stick);
                 mouse_stick_active.store(stick, Ordering::Relaxed);
@@ -329,14 +322,10 @@ fn set_auto_start(enabled: bool) {
 /// Same source image used for icon.ico (exe / installer icon).
 const ICON_PNG: &[u8] = include_bytes!("../imgs/ChatGPT Image Feb 23, 2026, 05_30_47 AM.png");
 
-// ── Profile colors / icon ─────────────────────────────────────────────
+// ── Icon ──────────────────────────────────────────────────────────────
 
-fn profile_color(profile: Profile) -> (u8, u8, u8) {
-    match profile {
-        Profile::Default => (255, 255, 255), // white on OLED black
-        Profile::Tmux    => (57, 255, 20),   // neon green (#39FF14)
-    }
-}
+/// Neon green (#39FF14) silhouette on OLED black.
+const ICON_COLOR: (u8, u8, u8) = (57, 255, 20);
 
 /// Load the embedded DualSense PNG, resize to 32×32, and tint the silhouette.
 ///
@@ -370,21 +359,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_icon_loads() {
-        let (r, g, b) = profile_color(Profile::Default);
+    fn icon_loads() {
+        let (r, g, b) = ICON_COLOR;
         make_icon(r, g, b); // must not panic
-    }
-
-    #[test]
-    fn tmux_icon_loads() {
-        let (r, g, b) = profile_color(Profile::Tmux);
-        make_icon(r, g, b); // must not panic
-    }
-
-    #[test]
-    fn rgba_has_correct_size() {
-        let (r, g, b) = profile_color(Profile::Default);
-        let icon = make_icon(r, g, b);
-        drop(icon); // Icon::from_rgba already validates size internally
     }
 }

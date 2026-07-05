@@ -5,7 +5,7 @@
 <h1 align="center">DS4CC</h1>
 
 <p align="center">
-  Turn a PlayStation controller into a programmable dev companion with AI awareness.
+  Turn a PlayStation controller into a shortcut mapper for terminal-first development.
 </p>
 
 <p align="center">
@@ -16,177 +16,156 @@
 
 ## Mission
 
-Turn a controller into a programmable command interface for developers.
-
-Make invisible processes tactile. Make agent states observable, system-wide. Reduce keyboard friction. Keep the system simple.
+One controller, one flat button map, zero ceremony. Buttons send real keystrokes — tmux window control, Claude Code shortcuts, arrows, Enter/Escape/Tab — plus mouse cursor, scroll, and mic mute. Keep the system simple.
 
 ---
 
 ## What This Is
 
-DS4CC is a small Rust program that runs in the background and lets your PlayStation controller:
+DS4CC is a small Rust daemon that runs in the Windows tray and lets your PlayStation controller:
 
-- **Monitor Claude Code / Claude Desktop / OpenCode / Codex activity across Windows & WSL** — lightbar changes provide a quick overview of agent states
-- **Give you rumble + lightbar feedback** on agent state transitions
-- **Control tmux** — switch panes, split windows, navigate sessions
-- **Control Windows Terminal** — open tabs, switch tabs; shortcuts auto-detected from your `settings.json`
-- **Move the mouse and click** — touchpad swipe moves the cursor, touchpad press clicks; or use the left stick for cursor control
-- **Act like a programmable dev companion** — buttons map to real keystrokes or key combos, fully configurable per profile
-- **Pair with [Wispr](https://ref.wisprflow.ai/vgpnk) for a keyboard-free workflow** — voice handles text, controller handles everything else
+- **Send keystrokes** — every button maps to a key combo or chord sequence
+- **Drive tmux** — window navigation on the shoulder buttons, keybinds auto-detected from your running tmux server via WSL
+- **Drive Claude Code CLI** — map buttons to Claude Code actions (e.g. `chat:cycleMode`), auto-resolved from `~/.claude/keybindings.json`
+- **Move the mouse** — touchpad swipe or left stick moves the cursor, touchpad press clicks
+- **Scroll** — right stick, vertical + horizontal
+- **Toggle the mic** — DualSense mute button toggles the system microphone
+- **Pair with [Wispr](https://ref.wisprflow.ai/vgpnk)** — voice handles text, controller handles everything else
+
+No hooks, no polling, no agent-state tracking, no profiles. It is a shortcut mapper.
 
 ---
 
 ## Quick Start
 
 1. Download **[DS4CC-Setup.exe](https://github.com/VeigaPunk/DS4CC/releases/latest)** and run it
-2. Plug in your controller and launch DS4CC — hooks install automatically, no manual setup needed
+2. Plug in your controller — done
 
-The lightbar reflects real-time AI agent status — across all sessions, on both Windows and WSL. Rumble kicks in when a long-running task completes or an agent has been idle for a long time.
-
-Colors, thresholds, and behavior are configurable via `%APPDATA%\ds4cc\config.toml`.
+Keybinds are detected automatically on launch (one WSL round-trip). Everything is configurable via `%APPDATA%\ds4cc\config.toml`, but defaults work out of the box.
 
 ---
 
-## How It Actually Works
+## How It Works
 
-1. You launch `ds4cc.exe` — the console window is hidden automatically
-2. It loads your config (`%APPDATA%\ds4cc\config.toml`, or defaults)
-3. It starts a tray icon (the only visible UI on launch)
-4. It creates `%TEMP%\DS4CC\` (cleaning any leftover agent files from crashed sessions), then starts watching it
-5. It auto-installs Claude Code hooks into WSL and the Windows user profile (first run / after update)
-6. It starts polling Codex JSONL session logs via `\\wsl.localhost\` (if available)
-7. It connects to your controller via HID
-8. It enters two loops:
-   - **Input** — read buttons → send keystrokes, toggle profiles (shortcut mapping)
-   - **Output** — conditional agent states → lightbar color | rumble
+1. You launch `ds4cc.exe` — the console window is hidden, a tray icon appears
+2. One WSL probe detects your tmux prefix + bindings and your Claude Code keybindings
+3. Every configurable button resolves to a key sequence at startup
+4. It connects to your controller via HID and maps input → `SendInput` keystrokes
 
 ---
 
-## Core Features
+## Button Map
 
-### 🎮 Controller → Keystrokes
-
-Press buttons → things happen. D-pad sends arrow keys. Right stick scrolls. Face buttons map to Enter, Escape, Tab.
-
-Two profiles: **Default** and **tmux**, cycled with the PS button. All are fully customizable — just ask Claude to change the mappings in the source and rebuild. Want a different button for Ctrl+C? Different tmux bindings? Change it per profile.
-
-#### Always Active
+### Fixed
 
 | Button | Action |
 |---|---|
 | Cross (×) | Enter |
 | Circle (○) | Escape |
 | Triangle (△) | Tab |
-| D-pad | Arrow keys |
+| D-pad | Arrow keys (hold to repeat) |
 | Right stick | Scroll (vertical + horizontal) |
-| Touchpad touch | Move mouse cursor (DualSense) |
+| Left stick / Touchpad | Mouse cursor (mode toggled in tray) |
 | Touchpad press | Mouse left-click |
-| Left stick | Move mouse cursor (stick mode) |
-| L2 | Wispr speech-to-text (hold to dictate) |
-| PS | Cycle profile (Default ↔ tmux) |
+| L2 (hold) | Ctrl+Win — Wispr push-to-talk |
+| L3 | Ctrl+T |
+| R3 | Ctrl+U (clear line) |
 | Mute | Toggle system microphone (DualSense only) |
 
-Mouse movement mode is toggled from the tray icon: **Mouse: Left Stick** switches between touchpad swipe and left analog stick for cursor control. DualShock 4 defaults to stick mode automatically. Touchpad click is always active regardless of mode.
+### Configurable (`[buttons]` in config.toml)
 
-#### Default Profile
-
-| Button | Action |
+| Button | Default |
 |---|---|
-| Square (□) | New tab (Windows Terminal) |
-| L1 | Previous tab (Windows Terminal) |
-| R1 | Next tab (Windows Terminal) |
-| R2 | Ctrl+C |
-| L3 | Ctrl+T |
-| R3 | Ctrl+P |
-
-Default profile bindings (Square, L1, R1) are **auto-detected from Windows Terminal's `settings.json`** — DS4CC reads your custom keybinds and uses them automatically. Falls back to standard defaults (`Ctrl+Shift+1`, `Ctrl+Shift+Tab`, `Ctrl+Tab`) if detection fails. Override in config if needed.
-
-#### tmux Profile
-
-| Button | Action |
-|---|---|
-| Square (□) | tmux: new-window |
 | L1 | tmux: previous-window |
 | R1 | tmux: next-window |
 | R2 | tmux: kill-window |
-| L3 | Ctrl+T |
-| R3 | Ctrl+U (clear line) |
+| Square (□) | tmux: new-window |
+| Share | unmapped |
+| Options | unmapped |
+| Touchpad button | unmapped (active when `[touchpad] enabled = false`) |
 
-tmux bindings are auto-detected from the running tmux server via WSL. Falls back to standard defaults if detection fails. Override in config if needed.
+A button value can be:
 
-### 🎙️ Controller + Wispr = No Keyboard
+1. **A tmux action name** — `"previous-window"` → sends prefix + the key bound to it (auto-detected from your tmux server, falling back to tmux defaults)
+2. **A Claude Code action name** — `"chat:cycleMode"` → sends the key from `~/.claude/keybindings.json`
+3. **A direct key combo** — `"ctrl+g"`, `"Shift+7"`
+4. **Empty string** — unmapped
 
-DS4CC was designed to pair with [Wispr Flow](https://ref.wisprflow.ai/vgpnk) — a voice-to-text tool that lets you dictate code, commands, and prompts.
+---
 
-The idea is simple:
+## Configuration
 
-- **Wispr** handles all text input — you talk, it types
-- **DS4CC** handles everything else — navigation, window switching, scrolling, Enter/Escape/Tab, tmux control
+Config file: `%APPDATA%\ds4cc\config.toml` — all settings optional.
 
-Together they replace the keyboard entirely. You lean back, hold the controller, talk to your AI agent, and watch the lightbar pulse while it works. When it's done, you feel the rumble.
+```toml
+[buttons]
+l1 = "previous-window"      # tmux action
+r1 = "next-window"
+r2 = "kill-window"
+square = "new-window"
+share = "chat:cycleMode"    # Claude Code action
+options = "ctrl+shift+b"    # direct combo
 
-This is the workflow DS4CC was built for: voice + gamepad + AI agents. No keyboard required.
+[tmux]
+auto_detect = true          # query the running tmux server via WSL
+prefix = "Ctrl+B"           # fallback if auto-detect fails
 
-### 🤖 Controller → AI Awareness
+[scroll]
+dead_zone = 20
+sensitivity = 1.0
+horizontal = true
 
-DS4CC monitors Claude Code, Claude Desktop, and Codex by watching state files. When the AI is:
+[touchpad]
+enabled = true
+sensitivity = 1.5           # cursor speed multiplier for touchpad swipe
 
-- **Working** → lightbar pulses blue
-- **Done** → lightbar flashes green, rumble kicks
-- **Error** → silently recovers (no visual noise)
-- **Idle** → default color
+[stick_mouse]
+enabled = true
+sensitivity = 8.0           # max pixels/frame at full deflection
+dead_zone = 15
 
-**Claude Code / Claude Desktop** — shell hooks in `~/.claude/hooks/` write per-session state files to `%TEMP%\DS4CC\` on lifecycle events. Hooks are installed automatically into both WSL and the Windows user profile on first launch.
-
-**OpenCode** — a JS plugin (`~/.config/opencode/plugins/ds4cc-opencode.js`) writes the same state files on session status events. Installed automatically by `bash install-hooks.sh`.
-
-**Codex** — the daemon polls Codex JSONL session logs directly via `\\wsl.localhost\` UNC paths. No hooks, no bridge scripts, no external processes. It tail-follows the JSONL files, parses events (`user_message`, `task_complete`, etc.), and writes the same state files.
-
-State files (`ds4cc_agent_<session_id>`) land in `%TEMP%\DS4CC\`. On startup DS4CC creates this directory and removes any leftover files from previous runs. Idle files are deleted as soon as they're read — the directory stays lean. The daemon polls every 500ms and aggregates across all sessions — priority: **working > done > idle**.
-
-Each agent is tracked individually:
-
-- **Done rumble** — when any agent finishes a task that took >= 10 minutes, the controller rumbles. Short tasks go straight back to idle without notification.
-- **Idle reminder** — when any agent sits idle for 8 minutes, an attention rumble fires — even if other agents are still working.
-- **"Done" threshold** — short tasks (< 10 min by default) write "idle" instead of "done" at the hook level. Only real work triggers the green flash.
-
-### 🔔 Feedback System
-
-Your controller becomes a status light.
-
-- **Lightbar** — color reflects agent state. Pulsing blue = working. Green = (long task) done. Configurable RGB & thresholds.
-- **Rumble** — haptic patterns on state transitions. You feel when the AI finishes.
-- **Profile LEDs** — Profile 1 = 1 white LED on controller, Profile 2 = 2 white LEDs.
-- **Mic mute** — mute button toggles system microphone via Core Audio (DualSense only). LED lit = muted.
-
-The output loop runs every ~33ms to keep LEDs smooth. Rumble is async but shares the HID device safely.
-
-### 🧠 Agent State Model
-
-The agent can be in one of four states:
-
-```
-Working > Error > Done > Idle
+[lightbar]                  # static lightbar color
+r = 255
+g = 140
+b = 0
 ```
 
-Priority logic: if any session is working, the controller shows working. "Done" automatically becomes idle after a configurable timeout. Stale "working" states (crashed sessions) get cleaned up after 10 minutes.
+---
 
-This prevents zombie states.
+## Keybind Detection
 
-### 🖥️ Tray Icon
+On launch DS4CC runs a **single WSL command** that fetches:
 
-PS button cycles profile (shortcut mappings). System tray icon shows current profile. Right-click for options:
+- `tmux show-options -g prefix` — your prefix key
+- `tmux list-keys -T prefix` — the full binding table (falls back to parsing `~/.tmux.conf` when no server is running)
+- `~/.claude/keybindings.json` — Claude Code CLI keybindings
+
+Missing pieces degrade gracefully: no WSL → hardcoded defaults, no tmux → config prefix, no Claude Code → action names fall through to direct-combo parsing.
+
+---
+
+## 🎙️ Controller + Wispr = No Keyboard
+
+DS4CC pairs with [Wispr Flow](https://ref.wisprflow.ai/vgpnk):
+
+- **Wispr** handles all text input — you talk, it types (L2 is the push-to-talk hold)
+- **DS4CC** handles everything else — navigation, tmux, scrolling, Enter/Escape/Tab
+
+Voice dictates. Controller navigates. No keyboard required.
+
+---
+
+## Tray Icon
 
 | Menu item | What it does |
 |---|---|
 | Open Wispr Flow | Launch Wispr Flow (prompts to download if not found) |
 | Restart | Restart DS4CC |
+| Check for Update | Self-update from GitHub releases |
 | Enable auto start-up | Toggle Windows startup entry |
-| Mouse: Left Stick | Switch mouse cursor control between touchpad and left stick |
-| Show Log Window | Show/hide the console log window (X button disabled to prevent accidental exit) |
+| Mouse: Left Stick | Switch cursor control between touchpad and left stick |
+| Show Log Window | Show/hide the console log window |
 | Exit | Quit |
-
-Tooltip shows `DS4CC — Default` or `DS4CC — tmux`.
 
 ---
 
@@ -197,14 +176,13 @@ Tooltip shows `DS4CC — Default` or `DS4CC — tmux`.
 | DualSense | ✓ | ✓ |
 | DualShock 4 | ✓ | ✓ |
 
-Bluetooth supports all features except Microphone Input (DualSense only — DS4 has no built-in mic).
+USB takes priority; Bluetooth is the automatic fallback. DS4 defaults to stick-mouse mode (no touchpad coordinate parsing).
 
 ## Requirements
 
 - Windows 10 / 11
 - DualSense or DualShock 4 controller (USB or Bluetooth)
-- **Optional:** WSL2 — needed for tmux profile and Codex integration
-- **Optional:** [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Claude Desktop](https://claude.ai/download), [OpenCode](https://opencode.ai), or [Codex](https://openai.com/index/codex/) for AI agent state feedback
+- **Optional:** WSL2 — needed for tmux / Claude Code keybind detection
 
 ---
 
@@ -216,191 +194,47 @@ Download **DS4CC-Setup.exe** from [Releases](https://github.com/VeigaPunk/DS4CC/
 
 - Installs to `%LOCALAPPDATA%\DS4CC` — no admin rights needed
 - Auto-start is **off by default** (opt-in checkbox)
-- Optional desktop shortcut
 
-### Manual (build from source)
+### Build from source
 
-Requires [Rust](https://rustup.rs):
-
-```bash
-cargo build --release
-target\release\ds4cc.exe
-```
-
----
-
-## Hook Setup
-
-Hooks are **installed automatically on first launch**. DS4CC writes the hook script to both WSL (`~/.claude/hooks/`) and the Windows user profile (`%USERPROFILE%\.claude\hooks\`), and registers it in `settings.json` for both Claude Code CLI and Claude Desktop.
-
-To install manually or force a reinstall, run from the repo root in WSL or Git Bash:
+Requires [Rust](https://rustup.rs). From WSL, cross-compile with the GNU toolchain:
 
 ```bash
-bash install-hooks.sh
+rustup target add x86_64-pc-windows-gnu
+sudo apt install gcc-mingw-w64-x86-64   # provides the linker + windres
+cargo build --release --target x86_64-pc-windows-gnu
 ```
 
-This installs both the Claude Code hook and the OpenCode plugin:
+Binary: `target/x86_64-pc-windows-gnu/release/ds4cc.exe`. (`assets/ds4cc.res` is a COFF resource generated with `x86_64-w64-mingw32-windres assets/ds4cc.rc -O coff -o assets/ds4cc.res`.)
 
-- **Claude Code / Claude Desktop** — copies `ds4cc-state.sh` to `~/.claude/hooks/` (WSL) and `%USERPROFILE%\.claude\hooks\` (Windows), and merges hook config into both `settings.json` files
-- **OpenCode** — copies `ds4cc-opencode.js` to `~/.config/opencode/plugins/`
-
-All hooks write agent state files to `%TEMP%\DS4CC\` (auto-discovered — no config needed).
-
-| Claude Code / Desktop Event | What happens |
-|---|---|
-| `UserPromptSubmit` | Lightbar → blue pulse (working) |
-| `Stop` | Lightbar → green (done) if task exceeded threshold, else idle |
-| `PostToolUseFailure` | Logged as error — agent self-recovers silently |
-
-| OpenCode Event | What happens |
-|---|---|
-| `session.status` busy | Lightbar → blue pulse (working) |
-| `session.status` idle | Lightbar → green (done) or idle |
-| `session.error` | Logged as error |
-| `session.deleted` | State file removed |
-
-Restart Claude Code / Claude Desktop / OpenCode after installing hooks.
-
-### Codex
-
-**Nothing to do.** DS4CC natively polls Codex JSONL session logs via `\\wsl.localhost\` UNC paths. No hooks, no bridge scripts, no external processes to manage. If WSL or Codex aren't installed, it skips silently.
-
-To disable:
-
-```toml
-[codex]
-enabled = false
-```
+To build the installer, compile `installer/ds4cc.iss` with [Inno Setup](https://jrsoftware.org/isinfo.php) (`ISCC.exe installer\ds4cc.iss`).
 
 ---
-
-## Configuration
-
-All settings are optional. Sensible defaults work out of the box.
-
-Config file: `%APPDATA%\ds4cc\config.toml`
-
-```toml
-poll_interval_ms = 500
-idle_timeout_s = 30
-stale_timeout_s = 600
-idle_reminder_s = 480     # per-agent idle rumble (8 min, 0 = disabled)
-
-[scroll]
-dead_zone = 20
-sensitivity = 1.0
-horizontal = true
-
-[touchpad]
-enabled = true
-sensitivity = 1.5     # cursor speed multiplier for touchpad swipe
-
-[stick_mouse]
-enabled = true
-sensitivity = 8.0     # max pixels/frame at full deflection
-dead_zone = 15
-
-[tmux]
-enabled = true
-auto_detect = true
-prefix = "Ctrl+B"
-
-[wt]
-enabled = true
-auto_detect = true
-square = "newTab"     # WT action name → auto-detected key combo
-l1 = "prevTab"
-r1 = "nextTab"
-
-[codex]
-enabled = true
-done_threshold_s = 600    # seconds before "done" fires (vs. straight to idle)
-
-# Lightbar colors (RGB) — customize per state
-[lightbar.idle]
-r = 255
-g = 140
-b = 0
-
-[lightbar.working]
-r = 0
-g = 100
-b = 255
-
-[lightbar.done]
-r = 0
-g = 255
-b = 0
-```
-
-Environment variables for the Claude Code hook script:
-
-| Variable | Default | Description |
-|---|---|---|
-| `DS4CC_DONE_THRESHOLD_S` | `600` | Minimum task duration (seconds) before "done" fires |
-| `DS4CC_STALE_WORKING_S` | `900` | Seconds before a stuck "working" state is pruned |
-| `DS4CC_STATE_DIR` | `%TEMP%\DS4CC` | Override the agent state file directory |
-
-For Codex, the done threshold is configured in `config.toml` under `[codex] done_threshold_s`.
-
----
-
-## Technical Notes
-
-- Written in Rust (2024 edition)
-- Uses HID directly via `hidapi`
-- Async runtime: `tokio` with multi-threaded scheduler
-- Input read timeout: 5ms
-- Output write interval: ~33ms
-- State polling interval: 500ms
-- Mic mute: Windows Core Audio COM API (`IAudioEndpointVolume`)
-- System tray: `tray-icon` crate
-- Config: TOML with `serde` defaults
-
-## Build from Source
-
-```bash
-git clone https://github.com/VeigaPunk/DS4CC.git
-cd DS4CC
-cargo build --release
-```
-
-Binary: `target\release\ds4cc.exe`
-
-To build the installer, open `installer/ds4cc.iss` in [Inno Setup](https://jrsoftware.org/isinfo.php) and compile.
 
 ## Architecture
 
 ```
 main.rs            Startup, connection loop, input/output orchestration
 config.rs          TOML config with serde defaults
+detect.rs          Single-probe keybind detection (tmux + Claude Code via WSL)
+tmux_detect.rs     Pure tmux notation/binding parsers
 controller.rs      VID/PID detection, controller type enums
 hid.rs             HID device discovery, open, read/write
 input.rs           Raw HID report parsing → UnifiedInput
-mapper.rs          Button mapping, profiles, d-pad repeat, scroll, touchpad/stick mouse
-output.rs          HID output reports (lightbar + rumble + player LEDs + mic LED)
-lightbar.rs        State → RGB color with pulse animation
-rumble.rs          Haptic patterns for state transitions
-state.rs           Multi-agent state file polling and aggregation
+mapper.rs          Button map resolution + dispatch, d-pad repeat, scroll, mouse
+output.rs          HID output reports (lightbar + player LED + mic LED)
 mic.rs             System microphone toggle via Core Audio COM
-tray.rs            System tray icon with profile indicator
-tmux_detect.rs     Auto-detect tmux prefix + key bindings via WSL
-wt_detect.rs       Auto-detect Windows Terminal keybindings from settings.json
-codex_poll.rs      Native Codex JSONL session poller via UNC paths
+tray.rs            System tray icon + menu
+update.rs          Self-update from GitHub releases
 wsl.rs             Shared WSL command execution utility
 ```
 
----
+## Technical Notes
 
-## Why It Exists
-
-When you run multiple AI agents, they can become hard to oversee. You might not know if they're working, idle or done.
-
-DS4CC turns that invisible state into light, color, and vibration. You feel when the AI finishes.
-
-Works with DualSense and DualShock 4. Pair it with [Wispr](https://ref.wisprflow.ai/vgpnk) and you don't even need a keyboard. Voice dictates. Controller navigates. The lightbar tells you what the agents are doing. You lean back and ship code.
-
-*This is the way.*
+- Rust 2024 edition, `tokio` async runtime
+- HID via `hidapi` (BT CRC validation, USB-priority reconnect loop)
+- Input read timeout 5ms; output refresh 100ms (static lightbar + mute LED)
+- Mic mute: Windows Core Audio COM API (`IAudioEndpointVolume`)
 
 ## License
 

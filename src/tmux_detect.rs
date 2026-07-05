@@ -1,13 +1,10 @@
-/// Auto-detect tmux configuration from a running tmux server via WSL.
+/// Parse tmux configuration from probe output (see `detect.rs` for the probe).
 ///
-/// Queries `tmux show-options -g prefix` for the prefix key and
-/// `tmux list-keys -T prefix` for the full binding table.
-/// Parses tmux key notation (C-a, M-n, etc.) into VKey combos.
-///
-/// Falls back gracefully if tmux isn't running or WSL isn't available.
+/// Consumes the text of `tmux show-options -g prefix`, `tmux list-keys -T prefix`,
+/// and `~/.tmux.conf` (fallback when the server isn't running), and parses tmux
+/// key notation (C-a, M-n, etc.) into VKey combos. Pure functions — no I/O.
 
 use crate::mapper::VKey;
-use crate::wsl::run_wsl;
 use std::collections::HashMap;
 
 /// Auto-detected tmux configuration.
@@ -27,19 +24,14 @@ impl TmuxDetected {
     }
 }
 
-/// Detect tmux configuration by querying a running tmux server via WSL.
-/// Returns `None` if detection fails entirely (WSL not available, tmux not running).
-pub fn detect() -> Option<TmuxDetected> {
-    log::info!("Auto-detecting tmux configuration via WSL...");
-    let start = std::time::Instant::now();
-
-    let prefix = detect_prefix();
-    let actions = detect_bindings();
-
-    let elapsed = start.elapsed();
+/// Parse tmux configuration from probe output sections.
+/// Returns `None` if nothing could be parsed (tmux not present at all).
+pub fn parse(prefix_out: &str, keys_out: &str, conf_out: &str) -> Option<TmuxDetected> {
+    let prefix = parse_prefix(prefix_out, conf_out);
+    let actions = parse_bindings(keys_out, conf_out);
 
     if prefix.is_none() && actions.is_empty() {
-        log::warn!("Tmux auto-detection failed (took {elapsed:?}). Using config defaults.");
+        log::warn!("Tmux detection found nothing. Using config defaults.");
         return None;
     }
 
@@ -48,50 +40,44 @@ pub fn detect() -> Option<TmuxDetected> {
     } else {
         log::warn!("Could not detect tmux prefix, using config value");
     }
-    log::info!("Detected {} tmux key bindings (took {elapsed:?})", actions.len());
+    log::info!("Detected {} tmux key bindings", actions.len());
 
     Some(TmuxDetected { prefix, actions })
 }
 
 // ── Prefix detection ─────────────────────────────────────────────────
 
-fn detect_prefix() -> Option<Vec<VKey>> {
-    // Try running tmux server first
-    if let Some(output) = run_wsl("tmux show-options -g prefix 2>/dev/null") {
-        // Format: "prefix C-a\n"
-        for line in output.lines() {
-            if let Some(key_str) = line.strip_prefix("prefix ") {
-                let key_str = key_str.trim();
-                if !key_str.is_empty() {
-                    log::debug!("Prefix from tmux server: {key_str}");
-                    return parse_tmux_key(key_str);
-                }
+fn parse_prefix(prefix_out: &str, conf_out: &str) -> Option<Vec<VKey>> {
+    // Prefer the running tmux server's answer. Format: "prefix C-a\n"
+    for line in prefix_out.lines() {
+        if let Some(key_str) = line.strip_prefix("prefix ") {
+            let key_str = key_str.trim();
+            if !key_str.is_empty() {
+                log::debug!("Prefix from tmux server: {key_str}");
+                return parse_tmux_key(key_str);
             }
         }
     }
 
     // Fallback: parse ~/.tmux.conf directly
-    log::debug!("Tmux server not running, parsing ~/.tmux.conf...");
-    if let Some(conf) = run_wsl("cat ~/.tmux.conf 2>/dev/null") {
-        for line in conf.lines() {
-            let line = line.trim();
-            // Match: set -g prefix C-a  or  set-option -g prefix C-a
-            if (line.starts_with("set ") || line.starts_with("set-option "))
-                && line.contains("prefix")
-                && !line.starts_with('#')
-            {
-                // Extract the key after "prefix"
-                if let Some(idx) = line.find("prefix") {
-                    let after = line[idx + 6..].trim();
-                    // Skip "prefix2" lines
-                    if after.starts_with('2') {
-                        continue;
-                    }
-                    let key_str = after.split_whitespace().next().unwrap_or("");
-                    if !key_str.is_empty() {
-                        log::debug!("Prefix from tmux.conf: {key_str}");
-                        return parse_tmux_key(key_str);
-                    }
+    for line in conf_out.lines() {
+        let line = line.trim();
+        // Match: set -g prefix C-a  or  set-option -g prefix C-a
+        if (line.starts_with("set ") || line.starts_with("set-option "))
+            && line.contains("prefix")
+            && !line.starts_with('#')
+        {
+            // Extract the key after "prefix"
+            if let Some(idx) = line.find("prefix") {
+                let after = line[idx + 6..].trim();
+                // Skip "prefix2" lines
+                if after.starts_with('2') {
+                    continue;
+                }
+                let key_str = after.split_whitespace().next().unwrap_or("");
+                if !key_str.is_empty() {
+                    log::debug!("Prefix from tmux.conf: {key_str}");
+                    return parse_tmux_key(key_str);
                 }
             }
         }
@@ -102,32 +88,27 @@ fn detect_prefix() -> Option<Vec<VKey>> {
 
 // ── Binding table detection ──────────────────────────────────────────
 
-fn detect_bindings() -> HashMap<String, Vec<VKey>> {
+fn parse_bindings(keys_out: &str, conf_out: &str) -> HashMap<String, Vec<VKey>> {
     let mut actions = HashMap::new();
 
-    // Try running tmux server first
-    if let Some(output) = run_wsl("tmux list-keys -T prefix 2>/dev/null") {
-        for line in output.lines() {
-            if let Some((vkeys, command)) = parse_binding_line(line) {
-                insert_binding(&mut actions, command, vkeys);
-            }
+    // Prefer the running tmux server's binding table
+    for line in keys_out.lines() {
+        if let Some((vkeys, command)) = parse_binding_line(line) {
+            insert_binding(&mut actions, command, vkeys);
         }
-        if !actions.is_empty() {
-            return actions;
-        }
+    }
+    if !actions.is_empty() {
+        return actions;
     }
 
     // Fallback: parse ~/.tmux.conf bind commands
-    log::debug!("Tmux server not running, parsing bind commands from ~/.tmux.conf...");
-    if let Some(conf) = run_wsl("cat ~/.tmux.conf 2>/dev/null") {
-        for line in conf.lines() {
-            let line = line.trim();
-            if line.starts_with('#') {
-                continue;
-            }
-            if let Some((vkeys, command)) = parse_conf_bind(line) {
-                insert_binding(&mut actions, command, vkeys);
-            }
+    for line in conf_out.lines() {
+        let line = line.trim();
+        if line.starts_with('#') {
+            continue;
+        }
+        if let Some((vkeys, command)) = parse_conf_bind(line) {
+            insert_binding(&mut actions, command, vkeys);
         }
     }
 

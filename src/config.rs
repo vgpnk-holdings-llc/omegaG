@@ -7,47 +7,26 @@ use serde::Deserialize;
 #[derive(Debug, Deserialize)]
 #[serde(default)]
 pub struct Config {
-    pub lightbar: LightbarConfig,
-    pub buttons: ButtonConfig,
+    pub lightbar: ColorConfig,
     pub scroll: ScrollConfig,
     pub stick_mouse: StickMouseConfig,
     pub touchpad: TouchpadConfig,
+    pub buttons: ButtonsConfig,
     pub tmux: TmuxConfig,
-    pub codex: CodexConfig,
-    pub opencode: OpenCodeConfig,
-    pub wt: WtConfig,
-    /// Directory where agent state files are written (ds4cc_agent_*)
-    pub state_dir: String,
-    pub poll_interval_ms: u64,
-    /// Seconds after "done" before auto-transitioning to "idle" (0 = disabled)
-    pub idle_timeout_s: u64,
-    /// Seconds before a "working" agent file is considered stale (crashed session)
-    pub stale_timeout_s: u64,
-    /// Seconds an individual agent must be idle before an attention rumble fires (0 = disabled)
-    pub idle_reminder_s: u64,
-    /// Seconds an agent must have been working before it's eligible for idle reminders.
-    /// Agents that worked less than this are treated as subagents and silently pruned.
-    pub subagent_filter_s: u64,
 }
 
-/// Lightbar color configuration per agent state.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(default)]
-pub struct LightbarConfig {
-    pub idle: ColorConfig,
-    pub working: ColorConfig,
-    pub done: ColorConfig,
-    pub error: ColorConfig,
-    /// Pulse speed for working state (full cycle in ms)
-    pub pulse_period_ms: u64,
-}
-
-/// RGB color.
+/// RGB color. Used for the static lightbar color.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ColorConfig {
     pub r: u8,
     pub g: u8,
     pub b: u8,
+}
+
+impl Default for ColorConfig {
+    fn default() -> Self {
+        Self { r: 255, g: 140, b: 0 } // orange
+    }
 }
 
 /// Right stick scroll configuration.
@@ -72,55 +51,56 @@ impl Default for ScrollConfig {
     }
 }
 
-/// Tmux integration configuration.
+/// Button → action mapping.
 ///
-/// Button values are **tmux action names** (e.g., "previous-window") by default.
-/// At startup, these are resolved to actual key combos by querying the running
-/// tmux server. If auto-detection fails, well-known tmux defaults are used.
-///
-/// You can also specify direct key combos (e.g., "p", "Shift+7") to bypass
-/// the action-name resolution — useful for custom overrides.
-///
-/// Empty strings mean "unmapped" — the button does nothing in Tmux profile.
+/// Each value is resolved at startup, in priority order:
+///   1. Empty string → unmapped (button does nothing)
+///   2. Tmux action name (e.g., "previous-window") → prefix + detected key
+///   3. Claude Code action name (e.g., "chat:cycleMode") → detected key sequence
+///      from ~/.claude/keybindings.json
+///   4. Direct key combo (e.g., "ctrl+g", "Shift+7")
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
-pub struct TmuxConfig {
-    /// Enable tmux profile (PS button cycles to it).
-    pub enabled: bool,
-    /// Auto-detect prefix and key bindings from tmux via WSL.
-    /// When true, button action names are resolved to actual keys automatically.
-    pub auto_detect: bool,
-    /// Tmux prefix key combo (e.g., "Ctrl+B"). Used as fallback if auto-detect fails.
-    pub prefix: String,
-    // Button → tmux action names or direct key combos (empty = unmapped)
+pub struct ButtonsConfig {
     pub l1: String,
     pub r1: String,
-    pub l2: String,
     pub r2: String,
-    pub l3: String,
-    pub r3: String,
     pub square: String,
     pub share: String,
     pub options: String,
     pub touchpad: String,
 }
 
-impl Default for TmuxConfig {
+impl Default for ButtonsConfig {
     fn default() -> Self {
         Self {
-            enabled: true,
-            auto_detect: true,
-            prefix: "Ctrl+B".into(),         // tmux default, overridden by auto-detect
             l1: "previous-window".into(),
             r1: "next-window".into(),
-            l2: "".into(),                    // unmapped
             r2: "kill-window".into(),
-            l3: "".into(),                    // unmapped
-            r3: "".into(),                    // unmapped (R3 = Ctrl+P direct)
             square: "new-window".into(),
             share: "".into(),                 // unmapped
             options: "".into(),               // unmapped
             touchpad: "".into(),              // unmapped
+        }
+    }
+}
+
+/// Tmux detection configuration.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct TmuxConfig {
+    /// Auto-detect prefix and key bindings from tmux via WSL.
+    /// When false, `prefix` and hardcoded tmux defaults are used as-is.
+    pub auto_detect: bool,
+    /// Tmux prefix key combo (e.g., "Ctrl+B"). Used as fallback if auto-detect fails.
+    pub prefix: String,
+}
+
+impl Default for TmuxConfig {
+    fn default() -> Self {
+        Self {
+            auto_detect: true,
+            prefix: "Ctrl+B".into(),         // tmux default, overridden by auto-detect
         }
     }
 }
@@ -155,7 +135,7 @@ impl Default for StickMouseConfig {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct TouchpadConfig {
-    /// Enable touchpad cursor control. Set false to use touchpad button in tmux/opencode mappings.
+    /// Enable touchpad cursor control. Set false to use the touchpad button in tmux mappings.
     pub enabled: bool,
     /// Cursor speed multiplier. 1.0 = raw touchpad units → pixels 1:1. Default 1.5.
     pub sensitivity: f32,
@@ -167,206 +147,16 @@ impl Default for TouchpadConfig {
     }
 }
 
-/// Codex JSONL poller configuration.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(default)]
-pub struct CodexConfig {
-    /// Enable native Codex JSONL polling via WSL UNC paths.
-    pub enabled: bool,
-    /// Seconds the task must run before "done" fires (shorter tasks go straight to idle).
-    pub done_threshold_s: u64,
-}
-
-impl Default for CodexConfig {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            done_threshold_s: 600, // 10 minutes
-        }
-    }
-}
-
-/// OpenCode plugin configuration.
-///
-/// OpenCode uses a JS plugin system. The DS4CC plugin (`hooks/opencode/ds4cc-opencode.js`)
-/// writes the same `ds4cc_agent_*` state files as the Claude Code and Codex integrations.
-/// No Rust poller is needed — the plugin pushes state directly via OpenCode's event system.
-///
-/// Install with `install-hooks.sh`, which copies the plugin to
-/// `~/.config/opencode/plugins/ds4cc-opencode.js`.
-///
-/// Button values are **OpenCode action names** (e.g., "session:next") by default.
-/// At startup these are resolved from `~/.config/opencode/opencode.json` via WSL.
-/// If auto-detection fails, hardcoded OpenCode defaults are used as fallback.
-///
-/// You can also specify direct key combos (e.g., "ctrl+]", "<leader>n") to bypass
-/// the action-name resolution — useful for custom overrides.
-///
-/// Empty strings mean "unmapped" — the button does nothing in OpenCode profile.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(default)]
-pub struct OpenCodeConfig {
-    /// Enable OpenCode profile (PS button cycles to it).
-    pub enabled: bool,
-    /// Auto-detect keybinds from ~/.config/opencode/opencode.json via WSL.
-    pub auto_detect: bool,
-    /// Seconds the task must run before "done" fires. Passed to the plugin via
-    /// DS4CC_DONE_THRESHOLD_S (set in your shell profile).
-    pub done_threshold_s: u64,
-    /// Leader key combo fallback (e.g., "ctrl+x"). Used when auto-detect finds no leader.
-    pub leader: String,
-    // Button → OpenCode action names or direct key combos (empty = unmapped)
-    pub l1: String,
-    pub r1: String,
-    pub l2: String,
-    pub r2: String,
-    pub l3: String,
-    pub r3: String,
-    pub square: String,
-    pub share: String,
-    pub options: String,
-    pub touchpad: String,
-}
-
-impl Default for OpenCodeConfig {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            auto_detect: true,
-            done_threshold_s: 600,        // 10 minutes
-            leader: "ctrl+x".into(),      // OpenCode default leader
-            l1: "session:prev".into(),
-            r1: "session:next".into(),
-            l2: "".into(),                // unmapped (L2 = Ctrl+Win hold in all profiles)
-            r2: "".into(),                // unmapped
-            l3: "".into(),                // unmapped (L3 = Ctrl+T in all profiles)
-            r3: "".into(),                // unmapped (R3 = Ctrl+P in all profiles)
-            square: "app:new-session".into(),
-            share: "".into(),
-            options: "".into(),
-            touchpad: "".into(),
-        }
-    }
-}
-
-/// Windows Terminal keybinding configuration for the Default profile.
-///
-/// Each button maps to a WT action name (e.g. "prevTab") or a direct key combo
-/// (e.g. "ctrl+shift+tab"). Action names are resolved with the priority:
-///   1. Auto-detected from settings.json
-///   2. Hardcoded default for well-known WT actions
-///   3. Direct key combo parse (backward compatible)
-#[derive(Debug, Clone, Deserialize)]
-#[serde(default)]
-pub struct WtConfig {
-    /// Enable Windows Terminal shortcut detection and mapping.
-    pub enabled: bool,
-    /// Auto-detect keybindings from settings.json.
-    pub auto_detect: bool,
-    /// Square → new tab (profile 1). Default: "newTab"
-    pub square: String,
-    /// L1 → previous tab. Default: "prevTab"
-    pub l1: String,
-    /// R1 → next tab. Default: "nextTab"
-    pub r1: String,
-    pub l2: String,
-    pub r2: String,
-    pub l3: String,
-    pub r3: String,
-    pub share: String,
-    pub options: String,
-}
-
-impl Default for WtConfig {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            auto_detect: true,
-            square: "newTab".into(),
-            l1: "prevTab".into(),
-            r1: "nextTab".into(),
-            l2: "".into(),
-            r2: "".into(),
-            l3: "".into(),
-            r3: "".into(),
-            share: "".into(),
-            options: "".into(),
-        }
-    }
-}
-
-/// Button mapping configuration.
-#[derive(Debug, Deserialize)]
-#[serde(default)]
-pub struct ButtonConfig {
-    pub cross: String,
-    pub circle: String,
-    pub square: String,
-    pub triangle: String,
-    pub l1: String,
-    pub r1: String,
-    pub dpad_up: String,
-    pub dpad_down: String,
-    pub dpad_left: String,
-    pub dpad_right: String,
-}
-
 impl Default for Config {
     fn default() -> Self {
         Self {
-            lightbar: LightbarConfig::default(),
-            buttons: ButtonConfig::default(),
+            lightbar: ColorConfig::default(),
             scroll: ScrollConfig::default(),
             stick_mouse: StickMouseConfig::default(),
             touchpad: TouchpadConfig::default(),
+            buttons: ButtonsConfig::default(),
             tmux: TmuxConfig::default(),
-            codex: CodexConfig::default(),
-            opencode: OpenCodeConfig::default(),
-            wt: WtConfig::default(),
-            state_dir: default_state_dir(),
-            poll_interval_ms: 500, // 2Hz
-            idle_timeout_s: 60,
-            stale_timeout_s: 600, // 10 minutes
-            idle_reminder_s: 480, // 8 minutes per-agent
-            subagent_filter_s: 40,
         }
-    }
-}
-
-impl Default for LightbarConfig {
-    fn default() -> Self {
-        Self {
-            idle: ColorConfig { r: 255, g: 140, b: 0 },   // orange
-            working: ColorConfig { r: 0, g: 100, b: 255 }, // blue
-            done: ColorConfig { r: 0, g: 255, b: 0 },     // green
-            error: ColorConfig { r: 0, g: 0, b: 0 },       // off (configurable)
-            pulse_period_ms: 2000,
-        }
-    }
-}
-
-impl Default for ButtonConfig {
-    fn default() -> Self {
-        Self {
-            cross: "Enter".into(),
-            circle: "Escape".into(),
-            square: "new_session".into(),
-            triangle: "Tab".into(),
-            l1: "Shift+Alt+Tab".into(),
-            r1: "Alt+Tab".into(),
-            dpad_up: "Up".into(),
-            dpad_down: "Down".into(),
-            dpad_left: "Left".into(),
-            dpad_right: "Right".into(),
-        }
-    }
-}
-
-fn default_state_dir() -> String {
-    if let Ok(temp) = std::env::var("TEMP") {
-        format!(r"{temp}\DS4CC")
-    } else {
-        r"C:\Temp\DS4CC".into()
     }
 }
 
@@ -408,27 +198,32 @@ mod tests {
     #[test]
     fn default_config_is_valid() {
         let config = Config::default();
-        assert_eq!(config.poll_interval_ms, 500);
-        assert_eq!(config.lightbar.idle.r, 255);
-        assert_eq!(config.lightbar.idle.g, 140);
-        assert_eq!(config.buttons.cross, "Enter");
+        assert_eq!(config.lightbar.r, 255);
+        assert_eq!(config.lightbar.g, 140);
+        assert_eq!(config.tmux.prefix, "Ctrl+B");
     }
 
     #[test]
     fn deserialize_partial_toml() {
         let toml_str = r#"
-            poll_interval_ms = 250
-
-            [lightbar.idle]
+            [lightbar]
             r = 100
             g = 100
             b = 100
+
+            [tmux]
+            prefix = "Ctrl+A"
+
+            [buttons]
+            share = "chat:cycleMode"
         "#;
         let config: Config = toml::from_str(toml_str).unwrap();
-        assert_eq!(config.poll_interval_ms, 250);
-        assert_eq!(config.lightbar.idle.r, 100);
+        assert_eq!(config.lightbar.r, 100);
+        assert_eq!(config.tmux.prefix, "Ctrl+A");
+        assert_eq!(config.buttons.share, "chat:cycleMode");
         // Other fields should be defaults
-        assert_eq!(config.lightbar.working.b, 255);
-        assert_eq!(config.buttons.cross, "Enter");
+        assert_eq!(config.scroll.dead_zone, 20);
+        assert_eq!(config.buttons.l1, "previous-window");
+        assert!(config.touchpad.enabled);
     }
 }

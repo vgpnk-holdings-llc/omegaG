@@ -1,39 +1,27 @@
 /// Button mapper: translates UnifiedInput → keyboard/mouse events via SendInput.
 ///
-/// Always active (both profiles):
+/// Fixed mappings (always active):
 ///   D-pad Up/Down/Left/Right → Arrow keys (two-frame confirm + repeat)
 ///   Cross    → Enter
 ///   Circle   → Escape
 ///   Triangle → Tab
 ///   Left stick  → Mouse cursor (velocity-based, configurable sensitivity)
 ///   Right stick → Mouse scroll wheel (vertical + horizontal)
-///   PS       → Cycle profiles (Default ↔ Tmux)
-///
-/// Default profile (Windows Terminal shortcuts, auto-detected from settings.json):
-///   Square   → new tab / profile 1   (newTab,  default ctrl+shift+1)
-///   L1       → previous tab          (prevTab, default ctrl+shift+tab)
-///   R1       → next tab              (nextTab, default ctrl+tab)
 ///   L2       → Ctrl+Win (hold)
-///   R2       → Ctrl+C
 ///   L3       → Ctrl+T
-///   R3       → Ctrl+P
-///
-/// Tmux profile (auto-detected from tmux config):
-///   L1       → tmux prefix + previous-window key
-///   R1       → tmux prefix + next-window key
-///   L2       → Ctrl+Win (hold)
-///   R2       → tmux prefix + kill-window key
 ///   R3       → Ctrl+U (clear line)
-///   Square   → tmux prefix + new-window key
-///   L3       → Ctrl+T
+///
+/// Configurable mappings ([buttons] in config.toml — L1, R1, R2, Square,
+/// Share, Options, Touchpad) resolve at startup to a key sequence, from a
+/// tmux action name (prefix + detected key), a Claude Code action name
+/// (detected from ~/.claude/keybindings.json), or a direct key combo.
+/// Defaults: L1/R1 → prev/next tmux window, R2 → kill-window, Square → new-window.
 ///
 /// Combos are sent atomically in a single SendInput call.
 
-use crate::config::{OpenCodeConfig, ScrollConfig, StickMouseConfig, TouchpadConfig, TmuxConfig, WtConfig};
+use crate::config::{ButtonsConfig, TmuxConfig};
+use crate::detect::Detected;
 use crate::input::{ButtonState, DPad, UnifiedInput};
-use crate::opencode_detect::{ActionBinding, OpenCodeDetected};
-use crate::tmux_detect::TmuxDetected;
-use crate::wt_detect::WtDetected;
 use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 use std::time::Instant;
 
@@ -180,32 +168,6 @@ pub fn parse_key_combo(s: &str) -> Option<Vec<VKey>> {
     s.split('+').map(|part| VKey::from_name(part.trim())).collect()
 }
 
-/// Active input profile. PS button cycles between Default and Tmux.
-///
-/// TODO: Add a third "Agent" profile that merges OpenCode + tmux shortcuts onto
-/// buttons that make sense for AI-assisted coding sessions — e.g. session nav on
-/// L1/R1 (OpenCode sessions), window nav on shoulder combos (tmux windows), new
-/// session/window on Square (OpenCode) / Triangle (tmux), etc. The resolved
-/// `OpenCodeState` and `TmuxState` are both already computed inside `MapperState`
-/// and ready to dispatch; only the profile variant, PS cycling, LED slot, and
-/// tray color need to be wired up.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Profile {
-    /// L2-Touchpad unmapped.
-    Default,
-    /// L2-Touchpad send tmux prefix + key sequences.
-    Tmux,
-}
-
-impl std::fmt::Display for Profile {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Profile::Default => f.write_str("default"),
-            Profile::Tmux    => f.write_str("tmux"),
-        }
-    }
-}
-
 /// An action the mapper can produce.
 #[derive(Debug, Clone)]
 pub enum Action {
@@ -223,8 +185,6 @@ pub enum Action {
     MouseMove { dx: i32, dy: i32 },
     /// Left mouse button click (press + release). Emitted by touchpad physical click.
     MouseClick,
-    /// Custom action identifier (e.g., "new_session").
-    Custom(String),
 }
 
 /// Key repeat timing.
@@ -279,38 +239,26 @@ impl RepeatTimer {
     }
 }
 
-/// Resolved tmux button mappings (parsed once from config strings).
-/// None = unmapped in tmux profile; Some = sends prefix + keys.
+/// A resolved button binding: an ordered sequence of key combos.
+/// Length 1 = plain combo; length 2+ = chord sequence (e.g. tmux prefix + key).
+type KeySeq = Vec<Vec<VKey>>;
+
+/// Resolved configurable button mappings (computed once at startup).
+/// None = unmapped — the button does nothing.
 #[derive(Clone)]
-struct TmuxState {
-    prefix: Vec<VKey>,
-    l1: Option<Vec<VKey>>,
-    r1: Option<Vec<VKey>>,
-    l2: Option<Vec<VKey>>,
-    r2: Option<Vec<VKey>>,
-    l3: Option<Vec<VKey>>,
-    r3: Option<Vec<VKey>>,
-    square: Option<Vec<VKey>>,
-    share: Option<Vec<VKey>>,
-    options: Option<Vec<VKey>>,
-    touchpad: Option<Vec<VKey>>,
+struct ButtonMap {
+    l1: Option<KeySeq>,
+    r1: Option<KeySeq>,
+    r2: Option<KeySeq>,
+    square: Option<KeySeq>,
+    share: Option<KeySeq>,
+    options: Option<KeySeq>,
+    touchpad: Option<KeySeq>,
 }
 
-impl Default for TmuxState {
+impl Default for ButtonMap {
     fn default() -> Self {
-        Self {
-            prefix: vec![VKey::Control, VKey::B],
-            l1: Some(vec![VKey::P]),                   // prev window
-            r1: Some(vec![VKey::N]),                   // next window
-            l2: None,
-            r2: Some(vec![VKey::Shift, VKey::D7]),     // kill window (&)
-            l3: None,
-            r3: None,
-            square: Some(vec![VKey::C]),               // new window
-            share: None,
-            options: None,
-            touchpad: None,
-        }
+        Self::resolve(&ButtonsConfig::default(), &TmuxConfig::default(), &Detected::default())
     }
 }
 
@@ -334,283 +282,63 @@ fn default_key_for_action(action: &str) -> Option<Vec<VKey>> {
     }
 }
 
-/// Resolve a button config value to VKey combo.
-///
-/// Resolution order:
-/// 1. If empty → None (unmapped)
-/// 2. Look up in auto-detected tmux bindings (action name → key)
-/// 3. Look up in hardcoded tmux defaults (action name → key)
-/// 4. Parse as direct key combo string (backward compatible)
-fn resolve_button(value: &str, detected: Option<&TmuxDetected>) -> Option<Vec<VKey>> {
-    if value.is_empty() {
-        return None;
-    }
+impl ButtonMap {
+    /// Resolve every configurable button from its config string.
+    ///
+    /// Resolution order per button:
+    /// 1. Empty string → None (unmapped)
+    /// 2. Tmux action name (detected bindings, then hardcoded tmux defaults) → prefix + key
+    /// 3. Claude Code action name (detected from ~/.claude/keybindings.json) → key sequence
+    /// 4. Direct key combo string (e.g. "ctrl+g") → single combo
+    fn resolve(buttons: &ButtonsConfig, tmux: &TmuxConfig, detected: &Detected) -> Self {
+        // Tmux prefix: prefer detected, fall back to config, then hardcoded default
+        let tmux_detected = if tmux.auto_detect { detected.tmux.as_ref() } else { None };
+        let prefix = tmux_detected
+            .and_then(|d| d.prefix.clone())
+            .unwrap_or_else(|| {
+                parse_key_combo(&tmux.prefix).unwrap_or_else(|| vec![VKey::Control, VKey::B])
+            });
+        log::info!("Tmux prefix resolved to: {prefix:?}");
 
-    // Try auto-detected bindings first
-    if let Some(det) = detected {
-        if let Some(keys) = det.key_for_action(value) {
-            log::debug!("Resolved tmux action '{value}' from detected bindings");
-            return Some(keys.clone());
-        }
-    }
-
-    // Try hardcoded defaults for well-known tmux actions
-    if let Some(keys) = default_key_for_action(value) {
-        log::debug!("Resolved tmux action '{value}' from hardcoded defaults");
-        return Some(keys);
-    }
-
-    // Try parsing as direct key combo (backward compatible with manual config)
-    parse_key_combo(value)
-}
-
-impl TmuxState {
-    fn from_config(cfg: &TmuxConfig, detected: Option<&TmuxDetected>) -> Self {
-        // Prefix: prefer detected, fall back to config, then hardcoded default
-        let prefix = if cfg.auto_detect {
-            detected
-                .and_then(|d| d.prefix.clone())
-                .unwrap_or_else(|| {
-                    parse_key_combo(&cfg.prefix).unwrap_or_else(|| vec![VKey::Control, VKey::B])
-                })
-        } else {
-            parse_key_combo(&cfg.prefix).unwrap_or_else(|| vec![VKey::Control, VKey::B])
+        let resolve = |value: &str| -> Option<KeySeq> {
+            if value.is_empty() {
+                return None;
+            }
+            // Tmux action → prefix + key sequence
+            if let Some(keys) = tmux_detected
+                .and_then(|d| d.key_for_action(value).cloned())
+                .or_else(|| default_key_for_action(value))
+            {
+                log::debug!("Resolved '{value}' as tmux action");
+                return Some(vec![prefix.clone(), keys]);
+            }
+            // Claude Code action → detected key sequence
+            if let Some(seq) = detected.claude_binding(value) {
+                log::debug!("Resolved '{value}' as Claude Code action");
+                return Some(seq.clone());
+            }
+            // Direct key combo
+            parse_key_combo(value).map(|combo| vec![combo])
         };
 
-        // Resolve buttons: action name → detected key → default key → direct key combo
-        let det = if cfg.auto_detect { detected } else { None };
-        let resolve = |s: &str| -> Option<Vec<VKey>> { resolve_button(s, det) };
-
-        log::info!("Tmux prefix resolved to: {:?}", prefix);
-
         Self {
-            prefix,
-            l1: resolve(&cfg.l1),
-            r1: resolve(&cfg.r1),
-            l2: resolve(&cfg.l2),
-            r2: resolve(&cfg.r2),
-            l3: resolve(&cfg.l3),
-            r3: resolve(&cfg.r3),
-            square: resolve(&cfg.square),
-            share: resolve(&cfg.share),
-            options: resolve(&cfg.options),
-            touchpad: resolve(&cfg.touchpad),
+            l1: resolve(&buttons.l1),
+            r1: resolve(&buttons.r1),
+            r2: resolve(&buttons.r2),
+            square: resolve(&buttons.square),
+            share: resolve(&buttons.share),
+            options: resolve(&buttons.options),
+            touchpad: resolve(&buttons.touchpad),
         }
     }
 }
 
-// ── OpenCode hardcoded defaults ───────────────────────────────────────
-
-/// Well-known OpenCode action → default binding fallback.
-/// Used when auto-detection is unavailable or an action has no detected binding.
-/// These mirror OpenCode's shipped defaults; users can override via config.
-fn default_binding_for_opencode_action(action: &str) -> Option<ActionBinding> {
-    match action {
-        // Session navigation (ctrl+[ / ctrl+] are common TUI conventions)
-        "session:prev" | "app:prev-session" | "app:session-prev" => {
-            Some(ActionBinding::Combo(vec![VKey::Control, VKey::LeftBracket]))
-        }
-        "session:next" | "app:next-session" | "app:session-next" => {
-            Some(ActionBinding::Combo(vec![VKey::Control, VKey::RightBracket]))
-        }
-        // New session (leader + n, leader defaults to ctrl+x)
-        "app:new-session" | "app:session-new" => {
-            Some(ActionBinding::LeaderKey(vec![VKey::N]))
-        }
-        // Toggle session list sidebar
-        "app:toggle-session-list" => {
-            Some(ActionBinding::Combo(vec![VKey::Control, VKey::Shift, VKey::S]))
-        }
-        _ => None,
-    }
-}
-
-/// Resolve a button config value to an `ActionBinding` for the OpenCode profile.
-///
-/// Resolution order:
-/// 1. Empty string  → None (unmapped)
-/// 2. Auto-detected binding from opencode.json
-/// 3. Hardcoded OpenCode defaults (action name lookup)
-/// 4. Direct binding parse (e.g., "ctrl+]" or "<leader>n")
-fn resolve_opencode_button(
-    value: &str,
-    detected: Option<&OpenCodeDetected>,
-) -> Option<ActionBinding> {
-    if value.is_empty() {
-        return None;
-    }
-
-    // Try auto-detected bindings first
-    if let Some(det) = detected {
-        if let Some(binding) = det.binding_for_action(value) {
-            log::debug!("Resolved OpenCode action '{value}' from detected bindings");
-            return Some(binding.clone());
-        }
-    }
-
-    // Try hardcoded defaults for well-known OpenCode actions
-    if let Some(binding) = default_binding_for_opencode_action(value) {
-        log::debug!("Resolved OpenCode action '{value}' from hardcoded defaults");
-        return Some(binding);
-    }
-
-    // Try parsing as a direct binding string (e.g., "ctrl+]" or "<leader>n")
-    crate::opencode_detect::parse_opencode_binding(value)
-}
-
-/// Resolved OpenCode button mappings (parsed once from config strings).
-/// None = unmapped; Combo = direct keypress; LeaderKey = leader then key.
-#[derive(Clone)]
-struct OpenCodeState {
-    leader: Vec<VKey>,
-    l1: Option<ActionBinding>,
-    r1: Option<ActionBinding>,
-    l2: Option<ActionBinding>,
-    r2: Option<ActionBinding>,
-    l3: Option<ActionBinding>,
-    r3: Option<ActionBinding>,
-    square: Option<ActionBinding>,
-    share: Option<ActionBinding>,
-    options: Option<ActionBinding>,
-    touchpad: Option<ActionBinding>,
-}
-
-impl Default for OpenCodeState {
-    fn default() -> Self {
-        // ctrl+x leader, session nav on L1/R1, new-session on Square
-        Self {
-            leader: vec![VKey::Control, VKey::X],
-            l1: Some(ActionBinding::Combo(vec![VKey::Control, VKey::LeftBracket])),
-            r1: Some(ActionBinding::Combo(vec![VKey::Control, VKey::RightBracket])),
-            l2: None,
-            r2: None,
-            l3: None,
-            r3: None,
-            square: Some(ActionBinding::LeaderKey(vec![VKey::N])),
-            share: None,
-            options: None,
-            touchpad: None,
-        }
-    }
-}
-
-impl OpenCodeState {
-    fn from_config(cfg: &OpenCodeConfig, detected: Option<&OpenCodeDetected>) -> Self {
-        // Leader: prefer detected, fall back to config string, then ctrl+x
-        let leader = if cfg.auto_detect {
-            detected
-                .and_then(|d| d.leader.clone())
-                .unwrap_or_else(|| {
-                    parse_key_combo(&cfg.leader)
-                        .unwrap_or_else(|| vec![VKey::Control, VKey::X])
-                })
-        } else {
-            parse_key_combo(&cfg.leader).unwrap_or_else(|| vec![VKey::Control, VKey::X])
-        };
-
-        let det = if cfg.auto_detect { detected } else { None };
-        let resolve = |s: &str| -> Option<ActionBinding> { resolve_opencode_button(s, det) };
-
-        log::info!("OpenCode leader resolved to: {:?}", leader);
-
-        Self {
-            leader,
-            l1: resolve(&cfg.l1),
-            r1: resolve(&cfg.r1),
-            l2: resolve(&cfg.l2),
-            r2: resolve(&cfg.r2),
-            l3: resolve(&cfg.l3),
-            r3: resolve(&cfg.r3),
-            square: resolve(&cfg.square),
-            share: resolve(&cfg.share),
-            options: resolve(&cfg.options),
-            touchpad: resolve(&cfg.touchpad),
-        }
-    }
-}
-
-// ── Windows Terminal shortcut state ──────────────────────────────────
-
-/// Resolved key combos for the Windows Terminal shortcut dictionary.
-#[derive(Clone)]
-struct WtState {
-    square:  Option<Vec<VKey>>,   // newTab  (profile 1)
-    l1:      Option<Vec<VKey>>,   // prevTab
-    r1:      Option<Vec<VKey>>,   // nextTab
-    l2:      Option<Vec<VKey>>,
-    r2:      Option<Vec<VKey>>,
-    l3:      Option<Vec<VKey>>,
-    r3:      Option<Vec<VKey>>,
-    share:   Option<Vec<VKey>>,
-    options: Option<Vec<VKey>>,
-}
-
-impl Default for WtState {
-    fn default() -> Self {
-        Self {
-            square:  default_key_for_wt_action("newTab"),
-            l1:      default_key_for_wt_action("prevTab"),
-            r1:      default_key_for_wt_action("nextTab"),
-            l2:      None,
-            r2:      None,
-            l3:      None,
-            r3:      None,
-            share:   None,
-            options: None,
-        }
-    }
-}
-
-/// Hardcoded fallback keys for well-known Windows Terminal actions.
-fn default_key_for_wt_action(action: &str) -> Option<Vec<VKey>> {
-    match action {
-        "newTab"       => parse_key_combo("ctrl+shift+1"),
-        "prevTab"      => parse_key_combo("ctrl+shift+tab"),
-        "nextTab"      => parse_key_combo("ctrl+tab"),
-        "closeTab"     => parse_key_combo("ctrl+shift+w"),
-        "duplicateTab" => parse_key_combo("ctrl+shift+d"),
-        "newWindow"    => parse_key_combo("ctrl+shift+n"),
-        "find"         => parse_key_combo("ctrl+shift+f"),
-        "splitDown"    => parse_key_combo("alt+shift+minus"),
-        "splitRight"   => parse_key_combo("alt+shift+plus"),
-        _ => None,
-    }
-}
-
-/// Resolve a single button's value for the Windows Terminal profile.
-/// Priority: auto-detected → hardcoded default → direct combo parse.
-fn resolve_wt_button(value: &str, detected: Option<&WtDetected>) -> Option<Vec<VKey>> {
-    if value.is_empty() {
-        return None;
-    }
-    if let Some(det) = detected {
-        if let Some(keys) = det.key_for_action(value) {
-            log::debug!("Resolved WT action '{value}' from detected bindings");
-            return Some(keys.clone());
-        }
-    }
-    if let Some(keys) = default_key_for_wt_action(value) {
-        log::debug!("Resolved WT action '{value}' from hardcoded defaults");
-        return Some(keys);
-    }
-    parse_key_combo(value)
-}
-
-impl WtState {
-    fn from_config(cfg: &WtConfig, detected: Option<&WtDetected>) -> Self {
-        let det = if cfg.auto_detect { detected } else { None };
-        let resolve = |s: &str| -> Option<Vec<VKey>> { resolve_wt_button(s, det) };
-        Self {
-            square:  resolve(&cfg.square),
-            l1:      resolve(&cfg.l1),
-            r1:      resolve(&cfg.r1),
-            l2:      resolve(&cfg.l2),
-            r2:      resolve(&cfg.r2),
-            l3:      resolve(&cfg.l3),
-            r3:      resolve(&cfg.r3),
-            share:   resolve(&cfg.share),
-            options: resolve(&cfg.options),
-        }
+/// Turn a resolved key sequence into the cheapest matching Action.
+fn seq_action(seq: &KeySeq) -> Action {
+    if seq.len() == 1 {
+        Action::KeyCombo(seq[0].clone())
+    } else {
+        Action::KeySequence(seq.clone())
     }
 }
 
@@ -641,12 +369,8 @@ pub struct MapperState {
     prev_touch: Option<(u16, u16)>,
     touchpad_enabled: bool,
     touchpad_sensitivity: f32,
-    // Profile system
-    active_profile: Profile,
-    tmux_available: bool, // false = only Default profile, PS does nothing
-    tmux: TmuxState,
-    opencode: OpenCodeState,
-    wt: WtState,
+    // Configurable button mappings (resolved once at startup)
+    buttons: ButtonMap,
 }
 
 impl Default for MapperState {
@@ -670,52 +394,32 @@ impl Default for MapperState {
             prev_touch: None,
             touchpad_enabled: true,
             touchpad_sensitivity: 1.5,
-            active_profile: Profile::Default,
-            tmux_available: true,
-            tmux: TmuxState::default(),
-            opencode: OpenCodeState::default(),
-            wt: WtState::default(),
+            buttons: ButtonMap::default(),
         }
     }
 }
 
 impl MapperState {
     /// Create a mapper with config-driven settings.
-    /// Detected configurations are used to resolve action-name → key bindings.
+    /// Detected keybinds are used to resolve action-name → key bindings.
     pub fn new(
-        scroll: &ScrollConfig,
-        stick_mouse: &StickMouseConfig,
-        touchpad: &TouchpadConfig,
-        tmux: &TmuxConfig,
-        tmux_detected: Option<&TmuxDetected>,
-        opencode: &OpenCodeConfig,
-        opencode_detected: Option<&OpenCodeDetected>,
-        wt: &WtConfig,
-        wt_detected: Option<&WtDetected>,
+        cfg: &crate::config::Config,
+        detected: &Detected,
         mouse_stick_active: Arc<AtomicBool>,
     ) -> Self {
         Self {
-            scroll_dead_zone: scroll.dead_zone as i16,
-            scroll_sensitivity: scroll.sensitivity,
-            scroll_horizontal: scroll.horizontal,
-            stick_mouse_enabled: stick_mouse.enabled,
-            stick_mouse_sensitivity: stick_mouse.sensitivity,
-            stick_mouse_dead_zone: stick_mouse.dead_zone as i16,
+            scroll_dead_zone: cfg.scroll.dead_zone as i16,
+            scroll_sensitivity: cfg.scroll.sensitivity,
+            scroll_horizontal: cfg.scroll.horizontal,
+            stick_mouse_enabled: cfg.stick_mouse.enabled,
+            stick_mouse_sensitivity: cfg.stick_mouse.sensitivity,
+            stick_mouse_dead_zone: cfg.stick_mouse.dead_zone as i16,
             mouse_stick_active,
-            touchpad_enabled: touchpad.enabled,
-            touchpad_sensitivity: touchpad.sensitivity,
-            active_profile: Profile::Default,
-            tmux_available: tmux.enabled,
-            tmux: TmuxState::from_config(tmux, tmux_detected),
-            opencode: OpenCodeState::from_config(opencode, opencode_detected),
-            wt: WtState::from_config(wt, wt_detected),
+            touchpad_enabled: cfg.touchpad.enabled,
+            touchpad_sensitivity: cfg.touchpad.sensitivity,
+            buttons: ButtonMap::resolve(&cfg.buttons, &cfg.tmux, detected),
             ..Default::default()
         }
-    }
-
-    /// Returns the currently active profile.
-    pub fn profile(&self) -> Profile {
-        self.active_profile
     }
 
     /// Given current input, return actions for newly pressed buttons and analog input.
@@ -744,78 +448,37 @@ impl MapperState {
         on_press!(circle, Action::KeyCombo(vec![VKey::Escape]));
         on_press!(triangle, Action::KeyCombo(vec![VKey::Tab]));
 
-        // --- PS button: cycle profiles ---
-        if current.ps && !self.prev.ps && self.tmux_available {
-            self.active_profile = match self.active_profile {
-                Profile::Default => Profile::Tmux,
-                Profile::Tmux    => Profile::Default,
+        // --- Fixed key mappings ---
+        // L2: hold Ctrl+Win while button is held
+        if current.l2 && !self.prev.l2 {
+            actions.push(Action::KeyDown(vec![VKey::Control, VKey::Win]));
+        } else if !current.l2 && self.prev.l2 {
+            actions.push(Action::KeyUp(vec![VKey::Control, VKey::Win]));
+        }
+        on_press!(l3, Action::KeyCombo(vec![VKey::Control, VKey::T]));
+        on_press!(r3, Action::KeyCombo(vec![VKey::Control, VKey::U]));
+
+        // --- Configurable button mappings ---
+        macro_rules! on_press_mapped {
+            ($field:ident) => {
+                if current.$field && !self.prev.$field {
+                    if let Some(ref seq) = self.buttons.$field {
+                        actions.push(seq_action(seq));
+                    }
+                }
             };
-            actions.push(Action::Custom(format!("profile:{}", self.active_profile)));
-            log::info!("Profile switched to: {}", self.active_profile);
         }
 
-        // --- Profile-dependent buttons ---
-        match self.active_profile {
-            Profile::Default => {
-                // Square → Windows Terminal new tab (profile 1, auto-detected or ctrl+shift+1)
-                if current.square && !self.prev.square {
-                    if let Some(ref keys) = self.wt.square {
-                        actions.push(Action::KeyCombo(keys.clone()));
-                    }
-                }
-                // L1 → previous tab (auto-detected or ctrl+shift+tab)
-                if current.l1 && !self.prev.l1 {
-                    if let Some(ref keys) = self.wt.l1 {
-                        actions.push(Action::KeyCombo(keys.clone()));
-                    }
-                }
-                // R1 → next tab (auto-detected or ctrl+tab)
-                if current.r1 && !self.prev.r1 {
-                    if let Some(ref keys) = self.wt.r1 {
-                        actions.push(Action::KeyCombo(keys.clone()));
-                    }
-                }
-                // L2: hold Ctrl+Win while button is held
-                if current.l2 && !self.prev.l2 {
-                    actions.push(Action::KeyDown(vec![VKey::Control, VKey::Win]));
-                } else if !current.l2 && self.prev.l2 {
-                    actions.push(Action::KeyUp(vec![VKey::Control, VKey::Win]));
-                }
-                on_press!(r2, Action::KeyCombo(vec![VKey::Control, VKey::C]));
-                on_press!(l3, Action::KeyCombo(vec![VKey::Control, VKey::T]));
-                on_press!(r3, Action::KeyCombo(vec![VKey::Control, VKey::P]));
-            }
-            Profile::Tmux => {
-                macro_rules! on_press_tmux {
-                    ($field:ident, $keys_field:ident) => {
-                        if current.$field && !self.prev.$field {
-                            if let Some(ref keys) = self.tmux.$keys_field {
-                                actions.push(Action::KeySequence(vec![
-                                    self.tmux.prefix.clone(),
-                                    keys.clone(),
-                                ]));
-                            }
-                        }
-                    };
-                }
-
-                on_press_tmux!(l1, l1);
-                on_press_tmux!(r1, r1);
-                on_press_tmux!(square, square);
-                // L2: hold Ctrl+Win while button is held
-                if current.l2 && !self.prev.l2 {
-                    actions.push(Action::KeyDown(vec![VKey::Control, VKey::Win]));
-                } else if !current.l2 && self.prev.l2 {
-                    actions.push(Action::KeyUp(vec![VKey::Control, VKey::Win]));
-                }
-                on_press_tmux!(r2, r2);
-                on_press!(l3, Action::KeyCombo(vec![VKey::Control, VKey::T]));
-                on_press!(r3, Action::KeyCombo(vec![VKey::Control, VKey::U]));
-                on_press_tmux!(share, share);
-                on_press_tmux!(options, options);
-                // Note: touchpad button is handled globally by process_touchpad() above.
-            }
-
+        on_press_mapped!(l1);
+        on_press_mapped!(r1);
+        on_press_mapped!(r2);
+        on_press_mapped!(square);
+        on_press_mapped!(share);
+        on_press_mapped!(options);
+        // Touchpad press is a mouse click while touchpad-mouse is enabled;
+        // with it disabled the touchpad button becomes a mappable button.
+        if !self.touchpad_enabled {
+            on_press_mapped!(touchpad);
         }
 
         // --- D-pad with two-frame confirm + repeat ---
@@ -1182,7 +845,7 @@ fn make_mouse_flag_input(flags: u32) -> INPUT {
     }
 }
 
-/// Execute an action (send keystrokes, scroll, mouse movement/click, or handle custom actions).
+/// Execute an action (send keystrokes, scroll, or mouse movement/click).
 #[cfg(windows)]
 pub fn execute_action(action: &Action) {
     match action {
@@ -1193,9 +856,6 @@ pub fn execute_action(action: &Action) {
         Action::Scroll { horizontal, vertical } => send_scroll(*horizontal, *vertical),
         Action::MouseMove { dx, dy } => send_mouse_move(*dx, *dy),
         Action::MouseClick => send_mouse_click(),
-        Action::Custom(name) => {
-            log::info!("Custom action triggered: {name}");
-        }
     }
 }
 
@@ -1274,32 +934,18 @@ mod tests {
     }
 
     #[test]
-    fn l1_produces_prev_tab() {
-        // Default profile: L1 → Windows Terminal prevTab (ctrl+shift+tab)
+    fn l1_produces_tmux_prev_window() {
+        // L1 → tmux prefix + previous-window key
         let mut mapper = MapperState::default();
         let input = input_with(|i| i.buttons.l1 = true);
         let actions = mapper.update(&input);
         assert_eq!(actions.len(), 1);
         match &actions[0] {
-            Action::KeyCombo(keys) => assert_eq!(keys, &[VKey::Control, VKey::Shift, VKey::Tab]),
-            _ => panic!("Expected KeyCombo"),
-        }
-    }
-
-    #[test]
-    fn square_produces_wt_new_tab() {
-        // Default profile: Square → Windows Terminal newTab (ctrl+shift+1)
-        let mut mapper = MapperState::default();
-        let input = input_with(|i| i.buttons.square = true);
-        let actions = mapper.update(&input);
-        assert_eq!(actions.len(), 1);
-        match &actions[0] {
-            Action::KeyCombo(keys) => assert_eq!(
-                keys,
-                &[VKey::Control, VKey::Shift, VKey::D1],
-                "Expected ctrl+shift+1 for newTab"
-            ),
-            _ => panic!("Expected KeyCombo(ctrl+shift+1)"),
+            Action::KeySequence(seq) => {
+                assert_eq!(seq[0], vec![VKey::Control, VKey::B]);
+                assert_eq!(seq[1], vec![VKey::P]);
+            }
+            _ => panic!("Expected KeySequence"),
         }
     }
 
@@ -1357,83 +1003,72 @@ mod tests {
         );
     }
 
-    /// Helper: activate tmux profile by pressing PS.
-    fn switch_to_tmux(mapper: &mut MapperState) {
+    #[test]
+    fn ps_does_nothing() {
+        let mut mapper = MapperState::default();
         let ps_press = input_with(|i| i.buttons.ps = true);
         let actions = mapper.update(&ps_press);
-        assert!(actions.iter().any(|a| matches!(a, Action::Custom(s) if s == "profile:tmux")));
-        assert_eq!(mapper.profile(), Profile::Tmux);
-        // Release PS
-        mapper.update(&UnifiedInput::default());
+        assert!(actions.is_empty(), "PS button is unmapped");
     }
 
     #[test]
-    fn ps_cycles_profiles() {
-        let mut mapper = MapperState::default();
-        assert_eq!(mapper.profile(), Profile::Default);
-
-        // Press PS → switch to Tmux
-        switch_to_tmux(&mut mapper);
-
-        // Press PS again → back to Default
-        let ps_press = input_with(|i| i.buttons.ps = true);
-        let actions = mapper.update(&ps_press);
-        assert!(actions.iter().any(|a| matches!(a, Action::Custom(s) if s == "profile:default")));
-        assert_eq!(mapper.profile(), Profile::Default);
-    }
-
-    #[test]
-    fn default_profile_l2_does_nothing() {
-        let mut mapper = MapperState::default();
-        assert_eq!(mapper.profile(), Profile::Default);
-
-        let input = input_with(|i| i.buttons.l2 = true);
-        let actions = mapper.update(&input);
-        assert!(!actions.iter().any(|a| matches!(a, Action::KeySequence(_))));
-    }
-
-    #[test]
-    fn tmux_l1_fires_key_sequence() {
-        let mut mapper = MapperState::default();
-        switch_to_tmux(&mut mapper);
+    fn unmapped_config_button_does_nothing() {
+        let mut cfg = crate::config::Config::default();
+        cfg.buttons.l1 = "".into();
+        let mut mapper = MapperState::new(
+            &cfg,
+            &Detected::default(),
+            Arc::new(AtomicBool::new(false)),
+        );
 
         let input = input_with(|i| i.buttons.l1 = true);
         let actions = mapper.update(&input);
-
-        let tmux_actions: Vec<_> = actions.iter()
-            .filter(|a| matches!(a, Action::KeySequence(_)))
-            .collect();
-        assert_eq!(tmux_actions.len(), 1);
-
-        match &tmux_actions[0] {
-            Action::KeySequence(seq) => {
-                assert_eq!(seq.len(), 2);
-                assert_eq!(seq[0], vec![VKey::Control, VKey::B]);
-                assert_eq!(seq[1], vec![VKey::P]);
-            }
-            _ => unreachable!(),
-        }
+        assert!(actions.is_empty(), "Unmapped button should do nothing");
     }
 
     #[test]
-    fn tmux_disabled_ps_does_nothing() {
-        let scroll_cfg = ScrollConfig::default();
-        let mut tmux_cfg = TmuxConfig::default();
-        tmux_cfg.enabled = false;
-        let mut mapper = MapperState::new(&scroll_cfg, &crate::config::StickMouseConfig::default(), &crate::config::TouchpadConfig::default(), &tmux_cfg, None, &crate::config::OpenCodeConfig::default(), None, &crate::config::WtConfig::default(), None, Arc::new(AtomicBool::new(false)));
+    fn claude_action_resolves_to_direct_combo() {
+        let mut cfg = crate::config::Config::default();
+        cfg.buttons.share = "chat:externalEditor".into();
+        let mut detected = Detected::default();
+        detected.claude.insert(
+            "chat:externalEditor".into(),
+            vec![vec![VKey::Control, VKey::G]],
+        );
+        let mut mapper = MapperState::new(
+            &cfg,
+            &detected,
+            Arc::new(AtomicBool::new(false)),
+        );
 
-        // PS press should not switch profiles
-        let ps_press = input_with(|i| i.buttons.ps = true);
-        let actions = mapper.update(&ps_press);
-        assert!(!actions.iter().any(|a| matches!(a, Action::Custom(s) if s.starts_with("profile:"))));
-        assert_eq!(mapper.profile(), Profile::Default);
+        let input = input_with(|i| i.buttons.share = true);
+        let actions = mapper.update(&input);
+        assert!(
+            actions.iter().any(|a| matches!(a, Action::KeyCombo(k) if *k == vec![VKey::Control, VKey::G])),
+            "Claude Code action should resolve to its detected combo"
+        );
+    }
+
+    #[test]
+    fn direct_combo_config_value() {
+        let mut cfg = crate::config::Config::default();
+        cfg.buttons.options = "ctrl+shift+b".into();
+        let mut mapper = MapperState::new(
+            &cfg,
+            &Detected::default(),
+            Arc::new(AtomicBool::new(false)),
+        );
+
+        let input = input_with(|i| i.buttons.options = true);
+        let actions = mapper.update(&input);
+        assert!(
+            actions.iter().any(|a| matches!(a, Action::KeyCombo(k) if *k == vec![VKey::Control, VKey::Shift, VKey::B])),
+            "Direct combo string should resolve as-is"
+        );
     }
 
     #[test]
     fn tmux_mapped_buttons() {
-        let mut mapper = MapperState::default();
-        switch_to_tmux(&mut mapper);
-
         let tests: Vec<(fn(&mut UnifiedInput), Vec<VKey>)> = vec![
             (|i| i.buttons.l1 = true, vec![VKey::P]),                   // prev window
             (|i| i.buttons.r1 = true, vec![VKey::N]),                   // next window
@@ -1442,8 +1077,7 @@ mod tests {
         ];
 
         for (setup, expected_action) in tests {
-            mapper = MapperState::default();
-            switch_to_tmux(&mut mapper);
+            let mut mapper = MapperState::default();
             let input = input_with(setup);
             let actions = mapper.update(&input);
             let seq: Vec<_> = actions.iter()
@@ -1457,9 +1091,6 @@ mod tests {
 
     #[test]
     fn tmux_unmapped_buttons_do_nothing() {
-        let mut mapper = MapperState::default();
-        switch_to_tmux(&mut mapper);
-
         // These buttons are unmapped in the default tmux config
         let unmapped: Vec<fn(&mut UnifiedInput)> = vec![
             |i| i.buttons.share = true,
@@ -1468,8 +1099,7 @@ mod tests {
         ];
 
         for setup in unmapped {
-            mapper = MapperState::default();
-            switch_to_tmux(&mut mapper);
+            let mut mapper = MapperState::default();
             let input = input_with(setup);
             let actions = mapper.update(&input);
             assert!(
@@ -1480,94 +1110,25 @@ mod tests {
     }
 
     #[test]
-    fn r3_ctrl_p_default_ctrl_u_tmux() {
-        // Default profile: R3 → Ctrl+P
+    fn r3_sends_ctrl_u() {
         let mut mapper = MapperState::default();
-        let input = input_with(|i| i.buttons.r3 = true);
-        let actions = mapper.update(&input);
-        assert!(
-            actions.iter().any(|a| matches!(a, Action::KeyCombo(k) if *k == vec![VKey::Control, VKey::P])),
-            "R3 should send Ctrl+P in Default profile"
-        );
-
-        // Tmux profile: R3 → Ctrl+U (clear line)
-        let mut mapper = MapperState::default();
-        switch_to_tmux(&mut mapper);
         let input = input_with(|i| i.buttons.r3 = true);
         let actions = mapper.update(&input);
         assert!(
             actions.iter().any(|a| matches!(a, Action::KeyCombo(k) if *k == vec![VKey::Control, VKey::U])),
-            "R3 should send Ctrl+U in Tmux profile"
+            "R3 should send Ctrl+U"
         );
     }
 
     #[test]
-    fn l3_ctrl_t_both_profiles() {
-        // Default profile
+    fn l3_sends_ctrl_t() {
         let mut mapper = MapperState::default();
         let input = input_with(|i| i.buttons.l3 = true);
         let actions = mapper.update(&input);
         assert!(
             actions.iter().any(|a| matches!(a, Action::KeyCombo(k) if *k == vec![VKey::Control, VKey::T])),
-            "L3 should send Ctrl+T in Default profile"
+            "L3 should send Ctrl+T"
         );
-
-        // Tmux profile
-        let mut mapper = MapperState::default();
-        switch_to_tmux(&mut mapper);
-        let input = input_with(|i| i.buttons.l3 = true);
-        let actions = mapper.update(&input);
-        assert!(
-            actions.iter().any(|a| matches!(a, Action::KeyCombo(k) if *k == vec![VKey::Control, VKey::T])),
-            "L3 should send Ctrl+T in Tmux profile"
-        );
-    }
-
-    #[test]
-    fn tmux_overrides_default_l1() {
-        let mut mapper = MapperState::default();
-
-        // Default profile: L1 → Windows Terminal prevTab (ctrl+shift+tab)
-        let input = input_with(|i| i.buttons.l1 = true);
-        let actions = mapper.update(&input);
-        assert!(actions.iter().any(|a| matches!(a, Action::KeyCombo(k) if *k == vec![VKey::Control, VKey::Shift, VKey::Tab])));
-
-        // Release and switch to tmux
-        mapper.update(&UnifiedInput::default());
-        switch_to_tmux(&mut mapper);
-
-        // Tmux profile: L1 → prefix + P
-        let actions = mapper.update(&input);
-        let seq: Vec<_> = actions.iter()
-            .filter_map(|a| match a { Action::KeySequence(s) => Some(s), _ => None })
-            .collect();
-        assert_eq!(seq.len(), 1);
-        assert_eq!(seq[0][1], vec![VKey::P]);
-    }
-
-    #[test]
-    fn tmux_overrides_default_square() {
-        let mut mapper = MapperState::default();
-
-        // Default profile: Square → Windows Terminal newTab (ctrl+shift+1)
-        let input = input_with(|i| i.buttons.square = true);
-        let actions = mapper.update(&input);
-        assert!(actions.iter().any(|a| matches!(
-            a,
-            Action::KeyCombo(k) if *k == vec![VKey::Control, VKey::Shift, VKey::D1]
-        )));
-
-        // Release and switch to tmux
-        mapper.update(&UnifiedInput::default());
-        switch_to_tmux(&mut mapper);
-
-        // Tmux profile: Square → prefix + C
-        let actions = mapper.update(&input);
-        let seq: Vec<_> = actions.iter()
-            .filter_map(|a| match a { Action::KeySequence(s) => Some(s), _ => None })
-            .collect();
-        assert_eq!(seq.len(), 1);
-        assert_eq!(seq[0][1], vec![VKey::C]);
     }
 
     #[test]

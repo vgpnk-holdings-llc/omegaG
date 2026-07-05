@@ -83,8 +83,6 @@ pub struct ButtonState {
 pub struct UnifiedInput {
     pub left_stick: (u8, u8),
     pub right_stick: (u8, u8),
-    pub l2_analog: u8,
-    pub r2_analog: u8,
     pub buttons: ButtonState,
     /// Touchpad contacts (DualSense only; DS4 always returns [default; 2]).
     pub touchpad: [TouchPoint; 2],
@@ -95,8 +93,6 @@ impl Default for UnifiedInput {
         Self {
             left_stick: (128, 128),  // center
             right_stick: (128, 128), // center
-            l2_analog: 0,
-            r2_analog: 0,
             buttons: ButtonState::default(),
             touchpad: [TouchPoint::default(); 2],
         }
@@ -211,8 +207,6 @@ fn parse_dualsense_usb(data: &[u8]) -> Result<UnifiedInput, ParseError> {
     Ok(UnifiedInput {
         left_stick: (data[off], data[off + 1]),
         right_stick: (data[off + 2], data[off + 3]),
-        l2_analog: data[off + 4],
-        r2_analog: data[off + 5],
         // off+7 = buttons[0], off+8 = buttons[1], off+9 = buttons[2]
         // (off+6 is a counter)
         buttons: parse_buttons(data[off + 7], data[off + 8], data[off + 9]),
@@ -233,8 +227,6 @@ fn parse_dualsense_bt(data: &[u8]) -> Result<UnifiedInput, ParseError> {
     Ok(UnifiedInput {
         left_stick: (data[off], data[off + 1]),
         right_stick: (data[off + 2], data[off + 3]),
-        l2_analog: data[off + 4],
-        r2_analog: data[off + 5],
         buttons: parse_buttons(data[off + 7], data[off + 8], data[off + 9]),
         touchpad: parse_touch_points(data, off),
     })
@@ -258,8 +250,6 @@ fn parse_ds4_usb(data: &[u8]) -> Result<UnifiedInput, ParseError> {
             b.mute = false; // DS4 has no mute button; bit 2 of b2 is a counter
             b
         },
-        l2_analog: data[off + 7],
-        r2_analog: data[off + 8],
         // DS4 touchpad has a different layout — not yet implemented.
         touchpad: [TouchPoint::default(); 2],
     })
@@ -283,8 +273,6 @@ fn parse_ds4_bt(data: &[u8]) -> Result<UnifiedInput, ParseError> {
             b.mute = false; // DS4 has no mute button; bit 2 of b2 is a counter
             b
         },
-        l2_analog: data[off + 7],
-        r2_analog: data[off + 8],
         // DS4 touchpad has a different layout — not yet implemented.
         touchpad: [TouchPoint::default(); 2],
     })
