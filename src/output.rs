@@ -42,7 +42,6 @@
 ///   Byte 9:  lightbar green
 ///   Byte 10: lightbar blue
 ///   Last 4 bytes: CRC-32 (seed 0xA2)
-
 use crate::controller::{ConnectionType, ControllerType};
 use crate::crc32;
 
@@ -89,12 +88,12 @@ pub fn build_report(
 /// Total: 48 bytes. Report ID 0x02.
 fn build_dualsense_usb(state: &OutputState) -> Vec<u8> {
     let mut buf = vec![0u8; 48];
-    buf[0] = 0x02;  // report ID
-    buf[1] = 0x0F;  // valid_flag0: rumble + triggers (bits 0-3)
-    buf[2] = 0x15;  // valid_flag1: mic LED (bit0) + lightbar (bit2) + player LEDs (bit4)
+    buf[0] = 0x02; // report ID
+    buf[1] = 0x0F; // valid_flag0: rumble + triggers (bits 0-3)
+    buf[2] = 0x15; // valid_flag1: mic LED (bit0) + lightbar (bit2) + player LEDs (bit4)
     buf[3] = state.rumble_right;
     buf[4] = state.rumble_left;
-    buf[9] = state.mute_led;    // mute button LED: 0x00=off, 0x01=on, 0x02=pulse
+    buf[9] = state.mute_led; // mute button LED: 0x00=off, 0x01=on, 0x02=pulse
     buf[39] = 0x02; // valid_flag2: bit 1 = lightbar setup control enable
     buf[42] = 0x02; // lightbar_setup: fade out default blue LED
     buf[43] = 0x00; // led_brightness: 0x00=High
@@ -109,13 +108,13 @@ fn build_dualsense_usb(state: &OutputState) -> Vec<u8> {
 /// Total: 78 bytes. Report ID 0x31. DS4W uses [1]=0x02 fixed tag (no sequence).
 fn build_dualsense_bt(state: &OutputState, _seq: &mut u8) -> Vec<u8> {
     let mut buf = vec![0u8; 78];
-    buf[0] = 0x31;  // report ID
-    buf[1] = 0x02;  // DS4W: fixed data tag (no sequence numbering)
-    buf[2] = 0x0F;  // valid_flag0: rumble + triggers
-    buf[3] = 0x15;  // valid_flag1: mic LED (bit0) + lightbar (bit2) + player LEDs (bit4)
+    buf[0] = 0x31; // report ID
+    buf[1] = 0x02; // DS4W: fixed data tag (no sequence numbering)
+    buf[2] = 0x0F; // valid_flag0: rumble + triggers
+    buf[3] = 0x15; // valid_flag1: mic LED (bit0) + lightbar (bit2) + player LEDs (bit4)
     buf[4] = state.rumble_right;
     buf[5] = state.rumble_left;
-    buf[10] = state.mute_led;   // mute button LED (BT offset +1 vs USB)
+    buf[10] = state.mute_led; // mute button LED (BT offset +1 vs USB)
     buf[40] = 0x02; // valid_flag2: bit 1 = lightbar setup control enable
     buf[43] = 0x02; // lightbar_setup: fade out default blue LED
     buf[44] = 0x00; // led_brightness: 0x00=High
@@ -175,22 +174,40 @@ mod tests {
             mute_led: 0,
         };
         let mut seq = 0u8;
-        let report = build_report(ControllerType::DualSense, ConnectionType::Usb, &state, &mut seq);
+        let report = build_report(
+            ControllerType::DualSense,
+            ConnectionType::Usb,
+            &state,
+            &mut seq,
+        );
         assert_eq!(report.len(), 48);
         assert_eq!(report[0], 0x02);
         assert_eq!(report[45], 255); // red
         assert_eq!(report[46], 128); // green
-        assert_eq!(report[47], 0);   // blue
+        assert_eq!(report[47], 0); // blue
     }
 
     #[test]
     fn dualsense_player_leds_byte_position() {
         // Center dot + instant mode (0x24) must land at buf[44] (USB) and buf[45] (BT).
-        let state = OutputState { player_leds: 0x24, ..Default::default() };
+        let state = OutputState {
+            player_leds: 0x24,
+            ..Default::default()
+        };
         let mut seq = 0u8;
-        let usb = build_report(ControllerType::DualSense, ConnectionType::Usb, &state, &mut seq);
+        let usb = build_report(
+            ControllerType::DualSense,
+            ConnectionType::Usb,
+            &state,
+            &mut seq,
+        );
         assert_eq!(usb[44], 0x24);
-        let bt = build_report(ControllerType::DualSense, ConnectionType::Bluetooth, &state, &mut seq);
+        let bt = build_report(
+            ControllerType::DualSense,
+            ConnectionType::Bluetooth,
+            &state,
+            &mut seq,
+        );
         assert_eq!(bt[45], 0x24);
     }
 
@@ -198,7 +215,12 @@ mod tests {
     fn dualsense_bt_report_size_and_crc() {
         let state = OutputState::default();
         let mut seq = 0u8;
-        let report = build_report(ControllerType::DualSense, ConnectionType::Bluetooth, &state, &mut seq);
+        let report = build_report(
+            ControllerType::DualSense,
+            ConnectionType::Bluetooth,
+            &state,
+            &mut seq,
+        );
         assert_eq!(report.len(), 78);
         assert_eq!(report[0], 0x31);
         // Verify CRC is valid
@@ -221,7 +243,7 @@ mod tests {
         assert_eq!(report.len(), 32);
         assert_eq!(report[0], 0x05);
         assert_eq!(report[5], 128); // left rumble
-        assert_eq!(report[4], 64);  // right rumble
+        assert_eq!(report[4], 64); // right rumble
         assert_eq!(report[7], 255); // green
     }
 
@@ -229,7 +251,12 @@ mod tests {
     fn ds4_bt_report_size_and_crc() {
         let state = OutputState::default();
         let mut seq = 0u8;
-        let report = build_report(ControllerType::Ds4V2, ConnectionType::Bluetooth, &state, &mut seq);
+        let report = build_report(
+            ControllerType::Ds4V2,
+            ConnectionType::Bluetooth,
+            &state,
+            &mut seq,
+        );
         assert_eq!(report.len(), 79);
         assert_eq!(report[0], 0x11);
         assert!(crc32::validate(crc32::SEED_OUTPUT, &report));
@@ -239,8 +266,18 @@ mod tests {
     fn dualsense_bt_fixed_tag() {
         let state = OutputState::default();
         let mut seq = 0u8;
-        let r1 = build_report(ControllerType::DualSense, ConnectionType::Bluetooth, &state, &mut seq);
-        let r2 = build_report(ControllerType::DualSense, ConnectionType::Bluetooth, &state, &mut seq);
+        let r1 = build_report(
+            ControllerType::DualSense,
+            ConnectionType::Bluetooth,
+            &state,
+            &mut seq,
+        );
+        let r2 = build_report(
+            ControllerType::DualSense,
+            ConnectionType::Bluetooth,
+            &state,
+            &mut seq,
+        );
         // DS4W uses fixed tag 0x02 at byte 1 (no sequence)
         assert_eq!(r1[1], 0x02);
         assert_eq!(r2[1], 0x02);

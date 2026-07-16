@@ -4,6 +4,7 @@ mod crc32;
 mod detect;
 mod hid;
 mod input;
+mod launcher;
 mod mapper;
 mod mic;
 mod output;
@@ -17,7 +18,7 @@ use crate::output::OutputState;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use tokio::time::{sleep, Duration};
+use tokio::time::{Duration, sleep};
 
 #[tokio::main]
 async fn main() {
@@ -30,7 +31,12 @@ async fn main() {
             let ts_str = ts.to_string();
             let time_part = ts_str.split('T').nth(1).unwrap_or(&ts_str);
             let time_part = time_part.trim_end_matches('Z');
-            write!(buf, "{time_part} {:<5} {}\r\n", record.level(), record.args())
+            write!(
+                buf,
+                "{time_part} {:<5} {}\r\n",
+                record.level(),
+                record.args()
+            )
         })
         .init();
 
@@ -39,7 +45,7 @@ async fn main() {
     #[cfg(windows)]
     unsafe {
         use windows_sys::Win32::System::Console::GetConsoleWindow;
-        use windows_sys::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_HIDE};
+        use windows_sys::Win32::UI::WindowsAndMessaging::{SW_HIDE, ShowWindow};
         let hwnd = GetConsoleWindow();
         if !hwnd.is_null() {
             ShowWindow(hwnd, SW_HIDE);
@@ -78,7 +84,9 @@ async fn main() {
                 log::debug!("HID refresh failed: {e}");
             }
             let all = hid::find_all_controllers(&api);
-            let has_bt = all.iter().any(|c| c.connection_type == ConnectionType::Bluetooth);
+            let has_bt = all
+                .iter()
+                .any(|c| c.connection_type == ConnectionType::Bluetooth);
             match all.into_iter().next() {
                 Some(info) => match hid::open_device(&api, &info) {
                     Ok(dev) => break (info, dev, has_bt),
@@ -103,11 +111,11 @@ async fn main() {
         }
 
         // Activate BT extended mode if needed
-        if info.connection_type == ConnectionType::Bluetooth {
-            if let Err(e) = hid::activate_bt_extended_mode(&device, info.controller_type) {
-                log::error!("Failed to activate BT extended mode: {e}");
-                log::error!("Controller may not work correctly over Bluetooth.");
-            }
+        if info.connection_type == ConnectionType::Bluetooth
+            && let Err(e) = hid::activate_bt_extended_mode(&device, info.controller_type)
+        {
+            log::error!("Failed to activate BT extended mode: {e}");
+            log::error!("Controller may not work correctly over Bluetooth.");
         }
 
         // DS4 has no touchpad parsing — auto-enable stick mouse mode.
@@ -128,7 +136,7 @@ async fn main() {
                 let stop = Arc::new(AtomicBool::new(false));
                 let flag_clone = Arc::clone(&flag);
                 let stop_clone = Arc::clone(&stop);
-                let _ = std::thread::Builder::new()
+                let spawn_result = std::thread::Builder::new()
                     .name("usb-scanner".into())
                     .spawn(move || {
                         let Ok(mut scanner_api) = hidapi::HidApi::new() else {
@@ -146,12 +154,19 @@ async fn main() {
                                 continue;
                             }
                             if hid::has_usb_controller(&scanner_api) {
-                                log::info!("USB scanner: USB controller detected, signaling switch");
+                                log::info!(
+                                    "USB scanner: USB controller detected, signaling switch"
+                                );
                                 flag_clone.store(true, Ordering::Relaxed);
                                 return;
                             }
                         }
                     });
+                if let Err(e) = spawn_result {
+                    // Scanner failed to start: the flag simply never fires, so the
+                    // app stays on Bluetooth. Surface it rather than dropping silently.
+                    log::warn!("USB scanner: failed to spawn scanner thread: {e}");
+                }
                 (Some(flag), Some(stop))
             } else {
                 (None, None)
@@ -165,7 +180,16 @@ async fn main() {
         });
 
         // Run input loop — returns when device disconnects or USB scanner signals
-        run_input_loop(handle, ct, conn, &cfg, &detected, Arc::clone(&mouse_stick_active), usb_available.clone()).await;
+        run_input_loop(
+            handle,
+            ct,
+            conn,
+            &cfg,
+            &detected,
+            Arc::clone(&mouse_stick_active),
+            usb_available.clone(),
+        )
+        .await;
 
         // Input loop exited — cancel output task and stop USB scanner
         output_task.abort();
@@ -203,43 +227,62 @@ async fn run_input_loop(
     usb_switch_flag: Option<Arc<AtomicBool>>,
 ) {
     let mut mapper_state = mapper::MapperState::new(cfg, detected, mouse_stick_active);
-    let mut buf = [0u8; 128];
     let mut consecutive_errors = 0u32;
     let mut first_report = true;
     let mut last_mute = false;
+    let mut running = true;
+    // Bounded FIFO queue: decouples HID polling from action execution.
+    // try_send never blocks the poll loop; Full drops the action and logs.
+    // 32 slots absorbs bursts (at 250 Hz, 32 slots = ~128ms of queued actions).
+    let (action_tx, mut action_rx) = tokio::sync::mpsc::channel::<mapper::Action>(32);
+    let action_worker = tokio::spawn(async move {
+        while let Some(action) = action_rx.recv().await {
+            // execute_action blocks (SendInput / process spawn + the 16 ms Enter
+            // guard sleep). Run it on the blocking pool and await so the async
+            // runtime is never starved; awaiting one action at a time preserves
+            // exact FIFO execution order.
+            if let Err(e) =
+                tokio::task::spawn_blocking(move || mapper::execute_action(&action)).await
+            {
+                log::warn!("action worker: execution task failed to join: {e}");
+            }
+        }
+    });
 
-    loop {
-        match handle.read(&mut buf) {
+    while running {
+        let read_result = handle.read().await;
+        match read_result {
             Err(()) => {
                 // Device disconnected
-                return;
+                break;
             }
-            Ok(0) => {
+            Ok(data) if data.is_empty() => {
                 // No data available — yield and retry
                 sleep(Duration::from_millis(4)).await;
                 consecutive_errors = 0;
 
                 // Check if USB scanner detected a USB controller (BT→USB switch)
-                if let Some(ref flag) = usb_switch_flag {
-                    if flag.load(Ordering::Relaxed) {
-                        log::info!("USB controller available — switching from Bluetooth");
-                        return;
-                    }
+                if let Some(ref flag) = usb_switch_flag
+                    && flag.load(Ordering::Relaxed)
+                {
+                    log::info!("USB controller available — switching from Bluetooth");
+                    break;
                 }
 
                 continue;
             }
-            Ok(n) => {
-                let data = &buf[..n];
+            Ok(data) => {
+                let n = data.len();
 
                 if first_report {
-                    let hex: Vec<String> = data.iter().take(16).map(|b| format!("{b:02X}")).collect();
+                    let hex: Vec<String> =
+                        data.iter().take(16).map(|b| format!("{b:02X}")).collect();
                     log::info!("First report ({n} bytes): {}", hex.join(" "));
                     first_report = false;
                 }
 
                 // Validate CRC on Bluetooth
-                if conn == ConnectionType::Bluetooth && !input::validate_bt_crc(ct, data) {
+                if conn == ConnectionType::Bluetooth && !input::validate_bt_crc(ct, &data) {
                     consecutive_errors += 1;
                     if consecutive_errors % 100 == 1 {
                         log::warn!("BT CRC validation failed ({consecutive_errors} times)");
@@ -247,14 +290,26 @@ async fn run_input_loop(
                     continue;
                 }
 
-                match input::parse(ct, conn, data) {
+                match input::parse(ct, conn, &data) {
                     Ok(unified) => {
                         consecutive_errors = 0;
                         let actions = mapper_state.update(&unified);
-                        for action in &actions {
-                            #[cfg(windows)]
-                            mapper::execute_action(action);
+                        for action in actions {
                             log::debug!("Action: {action:?}");
+                            match action_tx.try_send(action) {
+                                Ok(_) => {}
+                                Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                                    log::warn!("Action queue full — dropping action");
+                                }
+                                Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                                    log::warn!("Action worker dropped; stopping input loop");
+                                    running = false;
+                                    break;
+                                }
+                            }
+                        }
+                        if !running {
+                            break;
                         }
 
                         // Mute button — toggle system mic on press (DualSense only; DS4 has no mic)
@@ -274,6 +329,8 @@ async fn run_input_loop(
             }
         }
     }
+    drop(action_tx);
+    action_worker.await.ok();
 }
 
 /// Player indicator LED preset — mimics PS5 native Player 1 assignment (center dot).
@@ -307,6 +364,35 @@ async fn run_output_loop(
             mute_led: mic::MIC_MUTED.load(Ordering::Relaxed) as u8,
         };
         let report = output::build_report(ct, conn, &out, &mut bt_seq);
-        handle.write(&report);
+        handle.write(report).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// Regression for the action worker: draining the bounded FIFO and awaiting
+    /// each `spawn_blocking` execution one at a time must preserve exact input
+    /// order. This mirrors the `action_worker` loop structure (recv → await
+    /// spawn_blocking → recv) that keeps blocking execution off the async runtime
+    /// without reordering actions.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn spawn_blocking_worker_preserves_fifo_order() {
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<usize>(32);
+        for i in 0..16 {
+            tx.send(i).await.unwrap();
+        }
+        drop(tx);
+
+        let mut executed = Vec::new();
+        while let Some(item) = rx.recv().await {
+            // Await each blocking unit before receiving the next — exact ordering.
+            let out = tokio::task::spawn_blocking(move || item * 10)
+                .await
+                .unwrap();
+            executed.push(out);
+        }
+
+        let expected: Vec<usize> = (0..16).map(|i| i * 10).collect();
+        assert_eq!(executed, expected, "FIFO order must be preserved exactly");
     }
 }

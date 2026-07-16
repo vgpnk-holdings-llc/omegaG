@@ -1,9 +1,16 @@
 /// Check for updates via GitHub Releases API.
 /// Downloads and runs the installer if a newer version is available.
-
+#[cfg(windows)]
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    MessageBoxW, MB_ICONINFORMATION, MB_ICONWARNING, MB_YESNO, IDYES,
+    IDYES, MB_ICONINFORMATION, MB_ICONWARNING, MB_YESNO, MessageBoxW,
 };
+
+// On non-Windows the flag constants are passed to show_msg() which ignores them.
+// Define dummy values so check_inner() compiles without duplication.
+#[cfg(not(windows))]
+const MB_ICONINFORMATION: u32 = 0;
+#[cfg(not(windows))]
+const MB_ICONWARNING: u32 = 0;
 
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 const API_URL: &str = "https://api.github.com/repos/VeigaPunk/DS4CC/releases/latest";
@@ -115,6 +122,7 @@ fn is_newer(remote: &str, current: &str) -> bool {
     }
 }
 
+#[cfg(windows)]
 fn show_msg(text: &str, caption: &str, flags: u32) {
     let text_w: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
     let cap_w: Vec<u16> = caption.encode_utf16().chain(std::iter::once(0)).collect();
@@ -123,6 +131,12 @@ fn show_msg(text: &str, caption: &str, flags: u32) {
     }
 }
 
+#[cfg(not(windows))]
+fn show_msg(text: &str, caption: &str, _flags: u32) {
+    log::info!("[{caption}] {text}");
+}
+
+#[cfg(windows)]
 fn ask_yes_no(text: &str, caption: &str) -> bool {
     let text_w: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
     let cap_w: Vec<u16> = caption.encode_utf16().chain(std::iter::once(0)).collect();
@@ -135,6 +149,12 @@ fn ask_yes_no(text: &str, caption: &str) -> bool {
         )
     };
     result == IDYES
+}
+
+#[cfg(not(windows))]
+fn ask_yes_no(text: &str, caption: &str) -> bool {
+    log::info!("[{caption}] {text} (non-interactive: declining)");
+    false
 }
 
 #[cfg(test)]
@@ -153,5 +173,17 @@ mod tests {
         assert!(!is_newer("2.6.0", "2.6.0"));
         assert!(!is_newer("2.5.0", "2.6.0"));
         assert!(!is_newer("1.0.0", "2.6.0"));
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn show_msg_does_not_panic_on_non_windows() {
+        show_msg("test message", "test caption", 0);
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn ask_yes_no_returns_false_on_non_windows() {
+        assert!(!ask_yes_no("proceed?", "confirm"));
     }
 }

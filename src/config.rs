@@ -1,7 +1,7 @@
 /// TOML configuration with sensible defaults.
 /// No config file is required to run — defaults work out of the box.
-
 use serde::Deserialize;
+use std::collections::HashMap;
 
 /// Top-level configuration.
 #[derive(Debug, Deserialize)]
@@ -13,6 +13,17 @@ pub struct Config {
     pub touchpad: TouchpadConfig,
     pub buttons: ButtonsConfig,
     pub tmux: TmuxConfig,
+    pub launchers: HashMap<String, LauncherAction>,
+}
+
+/// Named launcher actions for "launcher:<name>" button values.
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct LauncherAction {
+    /// Unicode text to emit.
+    pub text: String,
+    /// Whether to submit Enter after emitting text.
+    pub enter: bool,
 }
 
 /// RGB color. Used for the static lightbar color.
@@ -25,7 +36,11 @@ pub struct ColorConfig {
 
 impl Default for ColorConfig {
     fn default() -> Self {
-        Self { r: 255, g: 140, b: 0 } // orange
+        Self {
+            r: 255,
+            g: 140,
+            b: 0,
+        } // orange
     }
 }
 
@@ -58,7 +73,8 @@ impl Default for ScrollConfig {
 ///   2. Tmux action name (e.g., "previous-window") → prefix + detected key
 ///   3. Claude Code action name (e.g., "chat:cycleMode") → detected key sequence
 ///      from ~/.claude/keybindings.json
-///   4. Direct key combo (e.g., "ctrl+g", "Shift+7")
+///   4. Launcher action name (e.g., "launcher:godspeed") → Unicode text
+///   5. Direct key combo (e.g., "ctrl+g", "Shift+7")
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct ButtonsConfig {
@@ -83,9 +99,9 @@ impl Default for ButtonsConfig {
             r1: "next-window".into(),
             r2: "kill-window".into(),
             square: "new-window".into(),
-            share: "".into(),                 // unmapped
-            options: "".into(),               // unmapped
-            touchpad: "".into(),              // unmapped
+            share: "".into(),    // unmapped
+            options: "".into(),  // unmapped
+            touchpad: "".into(), // unmapped
             cross: "enter".into(),
             circle: "escape".into(),
             triangle: "tab".into(),
@@ -110,7 +126,7 @@ impl Default for TmuxConfig {
     fn default() -> Self {
         Self {
             auto_detect: true,
-            prefix: "Ctrl+B".into(),         // tmux default, overridden by auto-detect
+            prefix: "Ctrl+B".into(), // tmux default, overridden by auto-detect
         }
     }
 }
@@ -133,7 +149,11 @@ pub struct StickMouseConfig {
 
 impl Default for StickMouseConfig {
     fn default() -> Self {
-        Self { enabled: true, sensitivity: 8.0, dead_zone: 15 }
+        Self {
+            enabled: true,
+            sensitivity: 8.0,
+            dead_zone: 15,
+        }
     }
 }
 
@@ -153,12 +173,23 @@ pub struct TouchpadConfig {
 
 impl Default for TouchpadConfig {
     fn default() -> Self {
-        Self { enabled: true, sensitivity: 1.5 }
+        Self {
+            enabled: true,
+            sensitivity: 1.5,
+        }
     }
 }
 
 impl Default for Config {
     fn default() -> Self {
+        let mut launchers = HashMap::new();
+        launchers.insert(
+            "godspeed".to_string(),
+            LauncherAction {
+                text: "| godspeed".to_string(),
+                enter: true,
+            },
+        );
         Self {
             lightbar: ColorConfig::default(),
             scroll: ScrollConfig::default(),
@@ -166,18 +197,31 @@ impl Default for Config {
             touchpad: TouchpadConfig::default(),
             buttons: ButtonsConfig::default(),
             tmux: TmuxConfig::default(),
+            launchers,
         }
     }
 }
 
 impl Config {
+    /// Inject built-in launcher actions into `map` without overriding user entries.
+    /// Called after loading a config file so built-ins are always resolvable.
+    fn merge_default_launchers(map: &mut HashMap<String, LauncherAction>) {
+        // Built-in: | godspeed + Enter — matches claude-launcher's proven behaviour.
+        // Unassigned by default (no button maps to it unless user configures one).
+        map.entry("godspeed".to_string()).or_insert(LauncherAction {
+            text: "| godspeed".to_string(),
+            enter: true,
+        });
+    }
+
     /// Load config from the default config file path, or return defaults if not found.
     pub fn load() -> Self {
         let config_path = config_file_path();
         match std::fs::read_to_string(&config_path) {
-            Ok(contents) => match toml::from_str(&contents) {
-                Ok(config) => {
+            Ok(contents) => match toml::from_str::<Self>(&contents) {
+                Ok(mut config) => {
                     log::info!("Loaded config from {config_path}");
+                    Self::merge_default_launchers(&mut config.launchers);
                     config
                 }
                 Err(e) => {
@@ -211,6 +255,15 @@ mod tests {
         assert_eq!(config.lightbar.r, 255);
         assert_eq!(config.lightbar.g, 140);
         assert_eq!(config.tmux.prefix, "Ctrl+B");
+        assert_eq!(config.buttons.cross, "enter");
+        assert_eq!(config.buttons.circle, "escape");
+        assert_eq!(config.buttons.square, "new-window");
+        let gs = config
+            .launchers
+            .get("godspeed")
+            .expect("godspeed launcher must exist");
+        assert_eq!(gs.text, "| godspeed");
+        assert!(gs.enter, "godspeed built-in must submit Enter");
     }
 
     #[test]
@@ -235,5 +288,73 @@ mod tests {
         assert_eq!(config.scroll.dead_zone, 20);
         assert_eq!(config.buttons.l1, "previous-window");
         assert!(config.touchpad.enabled);
+    }
+
+    #[test]
+    fn deserialize_launcher_action_with_enter() {
+        let toml_str = r#"
+            [launchers.godspeed]
+            text = "| godspeed 🚀"
+            enter = true
+        "#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        let action = config
+            .launchers
+            .get("godspeed")
+            .expect("expected launcher action");
+        assert_eq!(action.text, "| godspeed 🚀");
+        assert!(action.enter);
+    }
+
+    #[test]
+    fn deserialize_launcher_action_without_enter_defaults_false() {
+        let toml_str = r#"
+            [launchers.myaction]
+            text = "custom text"
+        "#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        let action = config
+            .launchers
+            .get("myaction")
+            .expect("expected launcher action");
+        assert_eq!(action.text, "custom text");
+        assert!(!action.enter, "enter should default to false");
+    }
+
+    #[test]
+    fn deserialize_backward_compat_no_launcher_section() {
+        // Old configs without [launchers] must still parse and get built-in defaults
+        let toml_str = r#"
+            [lightbar]
+            r = 200
+            g = 100
+            b = 50
+        "#;
+        let mut config: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.lightbar.r, 200);
+        // Simulate what Config::load does after parsing
+        Config::merge_default_launchers(&mut config.launchers);
+        let gs = config
+            .launchers
+            .get("godspeed")
+            .expect("godspeed must exist after merge");
+        assert_eq!(gs.text, "| godspeed");
+        assert!(gs.enter);
+    }
+
+    #[test]
+    fn deserialize_launcher_unicode_text() {
+        let toml_str = r#"
+            [launchers.emoji]
+            text = "🎮 gaming time 🎮"
+            enter = false
+        "#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        let action = config
+            .launchers
+            .get("emoji")
+            .expect("expected emoji launcher");
+        assert_eq!(action.text, "🎮 gaming time 🎮");
+        assert!(!action.enter);
     }
 }

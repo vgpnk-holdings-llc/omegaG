@@ -26,7 +26,6 @@
 /// DS4 BT: Report ID 0x11, 78 bytes (extended mode)
 ///   Offset by +2 bytes from USB layout
 ///   Last 4 bytes are CRC-32
-
 use crate::controller::{ConnectionType, ControllerType};
 use crate::crc32;
 
@@ -68,7 +67,7 @@ pub struct ButtonState {
     pub r1: bool,
     pub l2: bool,
     pub r2: bool,
-    pub share: bool,   // "Create" on DualSense
+    pub share: bool, // "Create" on DualSense
     pub options: bool,
     pub l3: bool,
     pub r3: bool,
@@ -174,10 +173,10 @@ fn parse_touch_points(data: &[u8], off: usize) -> [TouchPoint; 2] {
     }
 
     let decode = |base: usize| -> TouchPoint {
-        let contact  = data[base];
-        let x_lo     = data[base + 1] as u16;
-        let mid      = data[base + 2];
-        let y_hi     = data[base + 3] as u16;
+        let contact = data[base];
+        let x_lo = data[base + 1] as u16;
+        let mid = data[base + 2];
+        let y_hi = data[base + 3] as u16;
 
         let active = (contact & 0x80) == 0;
         let x = x_lo | (((mid & 0x0F) as u16) << 8);
@@ -199,10 +198,17 @@ fn parse_touch_points(data: &[u8], off: usize) -> [TouchPoint; 2] {
 fn parse_dualsense_usb(data: &[u8]) -> Result<UnifiedInput, ParseError> {
     // Detect whether hidapi included the report ID byte.
     // If data[0] == 0x01 and len == 64, report ID is present → offset by 1.
-    let off = if data.len() == 64 && data[0] == 0x01 { 1 } else { 0 };
+    let off = if data.len() == 64 && data[0] == 0x01 {
+        1
+    } else {
+        0
+    };
     let min_len = off + 10;
     if data.len() < min_len {
-        return Err(ParseError::TooShort { expected: min_len, got: data.len() });
+        return Err(ParseError::TooShort {
+            expected: min_len,
+            got: data.len(),
+        });
     }
     Ok(UnifiedInput {
         left_stick: (data[off], data[off + 1]),
@@ -219,10 +225,17 @@ fn parse_dualsense_usb(data: &[u8]) -> Result<UnifiedInput, ParseError> {
 /// Then there's a 1-byte BT header, then the same payload as USB.
 fn parse_dualsense_bt(data: &[u8]) -> Result<UnifiedInput, ParseError> {
     // Detect report ID presence
-    let off = if data.len() >= 2 && data[0] == 0x31 { 2 } else { 1 };
+    let off = if data.len() >= 2 && data[0] == 0x31 {
+        2
+    } else {
+        1
+    };
     let min_len = off + 10;
     if data.len() < min_len {
-        return Err(ParseError::TooShort { expected: min_len, got: data.len() });
+        return Err(ParseError::TooShort {
+            expected: min_len,
+            got: data.len(),
+        });
     }
     Ok(UnifiedInput {
         left_stick: (data[off], data[off + 1]),
@@ -236,10 +249,17 @@ fn parse_dualsense_bt(data: &[u8]) -> Result<UnifiedInput, ParseError> {
 /// hidapi windows-native includes the report ID (0x01).
 fn parse_ds4_usb(data: &[u8]) -> Result<UnifiedInput, ParseError> {
     // Detect report ID presence
-    let off = if data.len() == 64 && data[0] == 0x01 { 1 } else { 0 };
+    let off = if data.len() == 64 && data[0] == 0x01 {
+        1
+    } else {
+        0
+    };
     let min_len = off + 9;
     if data.len() < min_len {
-        return Err(ParseError::TooShort { expected: min_len, got: data.len() });
+        return Err(ParseError::TooShort {
+            expected: min_len,
+            got: data.len(),
+        });
     }
     Ok(UnifiedInput {
         left_stick: (data[off], data[off + 1]),
@@ -260,10 +280,17 @@ fn parse_ds4_usb(data: &[u8]) -> Result<UnifiedInput, ParseError> {
 /// After report ID there's a 2-byte BT header before the USB-like layout.
 fn parse_ds4_bt(data: &[u8]) -> Result<UnifiedInput, ParseError> {
     // Detect report ID presence
-    let off = if data.len() >= 3 && data[0] == 0x11 { 3 } else { 2 };
+    let off = if data.len() >= 3 && data[0] == 0x11 {
+        3
+    } else {
+        2
+    };
     let min_len = off + 9;
     if data.len() < min_len {
-        return Err(ParseError::TooShort { expected: min_len, got: data.len() });
+        return Err(ParseError::TooShort {
+            expected: min_len,
+            got: data.len(),
+        });
     }
     Ok(UnifiedInput {
         left_stick: (data[off], data[off + 1]),
@@ -291,9 +318,7 @@ pub fn parse(
         (ControllerType::DualSense | ControllerType::DualSenseEdge, ConnectionType::Bluetooth) => {
             parse_dualsense_bt(data)
         }
-        (ControllerType::Ds4V1 | ControllerType::Ds4V2, ConnectionType::Usb) => {
-            parse_ds4_usb(data)
-        }
+        (ControllerType::Ds4V1 | ControllerType::Ds4V2, ConnectionType::Usb) => parse_ds4_usb(data),
         (ControllerType::Ds4V1 | ControllerType::Ds4V2, ConnectionType::Bluetooth) => {
             parse_ds4_bt(data)
         }
@@ -404,9 +429,9 @@ mod tests {
         let mut data = [0u8; 64];
         data[7] = 0x08; // hat neutral
         data[32] = 0x01; // contact active (id=1, bit7=0)
-        data[33] = 50;   // x_lo
+        data[33] = 50; // x_lo
         data[34] = 0x03; // x_hi=3, y_lo=0
-        data[35] = 0;    // y_hi
+        data[35] = 0; // y_hi
         let input = parse_dualsense_usb(&data).unwrap();
         assert!(input.touchpad[0].active);
         assert_eq!(input.touchpad[0].x, 50 | (3 << 8)); // = 818

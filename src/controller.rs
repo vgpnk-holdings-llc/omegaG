@@ -39,27 +39,13 @@ pub fn identify(vid: u16, pid: u16) -> Option<ControllerType> {
     }
 }
 
-/// Detect connection type from HID device path.
-/// DS4Windows heuristic: Bluetooth paths on Windows contain "&col02" or similar
-/// patterns and the interface number differs from USB.
-/// More reliably: USB paths contain "usb#" or "hid#vid_", BT paths contain
-/// "&0005" (HID over Bluetooth) or "{00001124" (Bluetooth HID GUID).
-pub fn detect_connection(path: &str) -> ConnectionType {
-    let lower = path.to_ascii_lowercase();
-    // USB HID paths on Windows typically contain "usb#" or "\\?\hid#vid_"
-    // Bluetooth paths contain bluetooth-specific GUIDs or "&0005"
-    if lower.contains("&0005") || lower.contains("{00001124") {
-        ConnectionType::Bluetooth
-    } else {
-        // Default to USB — if in doubt, USB is safer (no CRC needed)
-        ConnectionType::Usb
-    }
-}
-
 impl ControllerType {
     /// Returns true if this is a DualSense-family controller.
     pub fn is_dualsense(self) -> bool {
-        matches!(self, ControllerType::DualSense | ControllerType::DualSenseEdge)
+        matches!(
+            self,
+            ControllerType::DualSense | ControllerType::DualSenseEdge
+        )
     }
 
     /// Returns true if this is a DS4-family controller.
@@ -99,7 +85,10 @@ mod tests {
     #[test]
     fn identify_known_controllers() {
         assert_eq!(identify(0x054C, 0x0CE6), Some(ControllerType::DualSense));
-        assert_eq!(identify(0x054C, 0x0DF2), Some(ControllerType::DualSenseEdge));
+        assert_eq!(
+            identify(0x054C, 0x0DF2),
+            Some(ControllerType::DualSenseEdge)
+        );
         assert_eq!(identify(0x054C, 0x05C4), Some(ControllerType::Ds4V1));
         assert_eq!(identify(0x054C, 0x09CC), Some(ControllerType::Ds4V2));
     }
@@ -110,15 +99,28 @@ mod tests {
         assert_eq!(identify(0x0001, 0x0CE6), None);
     }
 
+    /// Windows-style path-string heuristic for connection type (test-only).
+    /// The hot path in `hid.rs` uses `conn_from_bus_type(dev.bus_type())` instead,
+    /// which is authoritative on both Linux and Windows.
+    fn detect_connection_from_path(path: &str) -> ConnectionType {
+        let lower = path.to_ascii_lowercase();
+        if lower.contains("&0005") || lower.contains("{00001124") {
+            ConnectionType::Bluetooth
+        } else {
+            ConnectionType::Usb
+        }
+    }
+
     #[test]
     fn detect_usb_path() {
-        let path = r"\\?\hid#vid_054c&pid_0ce6&mi_03#8&hash&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}";
-        assert_eq!(detect_connection(path), ConnectionType::Usb);
+        let path =
+            r"\\?\hid#vid_054c&pid_0ce6&mi_03#8&hash&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}";
+        assert_eq!(detect_connection_from_path(path), ConnectionType::Usb);
     }
 
     #[test]
     fn detect_bt_path() {
         let path = r"\\?\hid#{00001124-0000-1000-8000-00805f9b34fb}_vid&0002054c_pid&0ce6#8&hash&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}";
-        assert_eq!(detect_connection(path), ConnectionType::Bluetooth);
+        assert_eq!(detect_connection_from_path(path), ConnectionType::Bluetooth);
     }
 }

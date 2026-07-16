@@ -1,9 +1,9 @@
-/// CRC-32 with seed byte for Bluetooth HID reports.
-///
-/// Both DualSense and DS4 Bluetooth reports use CRC-32 with a seed byte
-/// prepended to the data before computing:
-/// - Input reports:  seed = 0xA1
-/// - Output reports: seed = 0xA2
+//! CRC-32 with seed byte for Bluetooth HID reports.
+//!
+//! Both DualSense and DS4 Bluetooth reports use CRC-32 with a seed byte
+//! prepended to the data before computing:
+//! - Input reports:  seed = 0xA1
+//! - Output reports: seed = 0xA2
 
 const CRC32_TABLE: [u32; 256] = {
     let mut table = [0u32; 256];

@@ -7,8 +7,7 @@
 ///
 /// Everything is best-effort: missing tmux, missing Claude Code, or missing
 /// WSL simply yields empty sections and the mapper falls back to defaults.
-
-use crate::mapper::{parse_key_combo, VKey};
+use crate::mapper::{VKey, parse_key_combo};
 use crate::tmux_detect::{self, TmuxDetected};
 use crate::wsl::run_wsl;
 use std::collections::HashMap;
@@ -99,7 +98,9 @@ fn parse_claude_keybindings(json: &str) -> HashMap<String, Vec<Vec<VKey>>> {
             continue;
         };
         for (keys, action) in bindings {
-            let Some(action) = action.as_str() else { continue };
+            let Some(action) = action.as_str() else {
+                continue;
+            };
             if actions.contains_key(action) {
                 continue; // first binding wins
             }
@@ -122,10 +123,7 @@ fn parse_claude_keys(s: &str) -> Option<Vec<Vec<VKey>>> {
         .replace("meta+", "alt+")
         .replace("cmd+", "alt+");
 
-    normalized
-        .split_whitespace()
-        .map(parse_key_combo)
-        .collect()
+    normalized.split_whitespace().map(parse_key_combo).collect()
 }
 
 // ── Tests ────────────────────────────────────────────────────────────
@@ -153,10 +151,7 @@ mod tests {
     #[test]
     fn parses_simple_combo() {
         let map = parse_claude_keybindings(SAMPLE);
-        assert_eq!(
-            map["app:toggleTodos"],
-            vec![vec![VKey::Control, VKey::T]]
-        );
+        assert_eq!(map["app:toggleTodos"], vec![vec![VKey::Control, VKey::T]]);
     }
 
     #[test]
@@ -171,10 +166,7 @@ mod tests {
     #[test]
     fn meta_means_alt() {
         let map = parse_claude_keybindings(SAMPLE);
-        assert_eq!(
-            map["chat:thinkingToggle"],
-            vec![vec![VKey::Alt, VKey::T]]
-        );
+        assert_eq!(map["chat:thinkingToggle"], vec![vec![VKey::Alt, VKey::T]]);
     }
 
     #[test]
@@ -182,10 +174,7 @@ mod tests {
         let map = parse_claude_keybindings(SAMPLE);
         assert_eq!(
             map["chat:killAgents"],
-            vec![
-                vec![VKey::Control, VKey::X],
-                vec![VKey::Control, VKey::K]
-            ]
+            vec![vec![VKey::Control, VKey::X], vec![VKey::Control, VKey::K]]
         );
     }
 

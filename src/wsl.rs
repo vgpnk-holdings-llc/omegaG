@@ -1,6 +1,6 @@
-/// Shared WSL command execution utility.
-///
-/// Used by `detect` to run commands in WSL.
+//! Shared WSL command execution utility.
+//!
+//! Used by `detect` to run commands in WSL.
 
 /// Run a command in WSL via `wsl -e bash -lc` (login shell, PATH-aware).
 /// Returns stdout on success, None on failure.

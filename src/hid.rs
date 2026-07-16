@@ -5,10 +5,22 @@
 /// - Activate Bluetooth extended mode via feature report
 /// - Non-blocking read with timeout
 /// - Write errors are non-fatal (log and continue)
-
 use crate::controller::{self, ConnectionType, ControllerType, GAMEPAD_USAGE, GAMEPAD_USAGE_PAGE};
-use hidapi::{HidApi, HidDevice};
+use hidapi::{BusType, HidApi, HidDevice};
 use std::sync::{Arc, Mutex};
+
+/// Derive connection type from the hidapi `BusType` — the authoritative signal on
+/// all platforms. On Linux the value is read from the sysfs HID_ID uevent entry
+/// (bus type 0x05 = Bluetooth, 0x03 = USB); on Windows the C hidapi backend
+/// populates it from the HID device info query. The previous path-string heuristic
+/// (detecting Windows BT GUIDs in the path) was always a no-op on Linux because
+/// hidraw paths (`/dev/hidrawN`) carry no such marker.
+fn conn_from_bus_type(bt: BusType) -> ConnectionType {
+    match bt {
+        BusType::Bluetooth => ConnectionType::Bluetooth,
+        _ => ConnectionType::Usb,
+    }
+}
 
 /// Information about a discovered controller.
 pub struct ControllerInfo {
@@ -31,13 +43,8 @@ pub fn find_all_controllers(api: &HidApi) -> Vec<ControllerInfo> {
 
         if let Some(ct) = controller::identify(dev.vendor_id(), dev.product_id()) {
             let path = dev.path().to_string_lossy().to_string();
-            let conn = controller::detect_connection(&path);
-            log::info!(
-                "Found {} ({}) at {}",
-                ct,
-                conn,
-                &path[..path.len().min(60)]
-            );
+            let conn = conn_from_bus_type(dev.bus_type());
+            log::info!("Found {} ({}) at {}", ct, conn, &path[..path.len().min(60)]);
             let info = ControllerInfo {
                 controller_type: ct,
                 connection_type: conn,
@@ -61,8 +68,7 @@ pub fn has_usb_controller(api: &HidApi) -> bool {
         dev.usage_page() == GAMEPAD_USAGE_PAGE
             && dev.usage() == GAMEPAD_USAGE
             && controller::identify(dev.vendor_id(), dev.product_id()).is_some()
-            && controller::detect_connection(&dev.path().to_string_lossy())
-                == ConnectionType::Usb
+            && conn_from_bus_type(dev.bus_type()) == ConnectionType::Usb
     })
 }
 
@@ -120,35 +126,58 @@ impl HidHandle {
         }
     }
 
-    /// Read an input report.
-    /// Returns Ok(n) with bytes read (0 = no data available).
-    /// Returns Err(()) if the device is disconnected.
-    pub fn read(&self, buf: &mut [u8]) -> Result<usize, ()> {
-        let dev = self.device.lock().unwrap();
-        match dev.read_timeout(buf, 5) {
-            Ok(n) => Ok(n),
-            Err(e) => {
-                let msg = format!("{e}");
-                if msg.contains("1167") || msg.contains("not connected") {
-                    Err(()) // device disconnected
-                } else {
-                    log::error!("HID read error: {e}");
-                    Ok(0)
+    /// Read an input report on the blocking pool.
+    ///
+    /// `read_timeout` is a blocking syscall (up to 5 ms), so it runs inside
+    /// `spawn_blocking` — never on an async worker thread — and the returned
+    /// future is awaited so the caller's async runtime is not starved. The
+    /// device mutex is locked and released entirely within the blocking closure,
+    /// so no lock is held across an `.await` point.
+    ///
+    /// Returns `Ok(bytes)` (empty = no data available within the timeout), or
+    /// `Err(())` if the device is disconnected.
+    pub async fn read(&self) -> Result<Vec<u8>, ()> {
+        let device = Arc::clone(&self.device);
+        tokio::task::spawn_blocking(move || {
+            let dev = device.lock().unwrap();
+            let mut buf = [0u8; 128];
+            match dev.read_timeout(&mut buf, 5) {
+                Ok(n) => Ok(buf[..n].to_vec()),
+                Err(e) => {
+                    let msg = format!("{e}");
+                    if msg.contains("1167") || msg.contains("not connected") {
+                        Err(()) // device disconnected
+                    } else {
+                        log::error!("HID read error: {e}");
+                        Ok(Vec::new())
+                    }
                 }
             }
-        }
+        })
+        .await
+        .unwrap_or_else(|e| {
+            log::error!("HID read task failed to join: {e}");
+            Err(())
+        })
     }
 
-    /// Write an output report. Errors are logged but not propagated (non-fatal).
-    pub fn write(&self, report: &[u8]) -> bool {
-        let dev = self.device.lock().unwrap();
-        match dev.write(report) {
-            Ok(_) => true,
-            Err(e) => {
-                log::debug!("HID write error (non-fatal): {e}");
-                false
+    /// Write an output report on the blocking pool. Errors are logged but not
+    /// propagated (non-fatal). The blocking `write` syscall runs inside
+    /// `spawn_blocking` and is awaited, mirroring [`read`](Self::read).
+    pub async fn write(&self, report: Vec<u8>) -> bool {
+        let device = Arc::clone(&self.device);
+        tokio::task::spawn_blocking(move || {
+            let dev = device.lock().unwrap();
+            match dev.write(&report) {
+                Ok(_) => true,
+                Err(e) => {
+                    log::debug!("HID write error (non-fatal): {e}");
+                    false
+                }
             }
-        }
+        })
+        .await
+        .unwrap_or(false)
     }
 }
 
@@ -188,5 +217,23 @@ mod tests {
         usb_vec.extend(bt_vec);
         assert_eq!(usb_vec.len(), 1);
         assert_eq!(usb_vec[0].connection_type, ConnectionType::Bluetooth);
+    }
+
+    #[test]
+    fn conn_from_bus_type_bluetooth() {
+        // BusType::Bluetooth must map to ConnectionType::Bluetooth so that BT
+        // controllers on Linux (hidraw paths carry no Windows GUID markers) are
+        // correctly identified and receive CRC validation + extended-mode activation.
+        assert_eq!(
+            conn_from_bus_type(BusType::Bluetooth),
+            ConnectionType::Bluetooth
+        );
+    }
+
+    #[test]
+    fn conn_from_bus_type_usb_and_unknown() {
+        assert_eq!(conn_from_bus_type(BusType::Usb), ConnectionType::Usb);
+        // Unknown/I2C/SPI bus types fall back to USB (safest default: skips BT CRC).
+        assert_eq!(conn_from_bus_type(BusType::Unknown), ConnectionType::Usb);
     }
 }

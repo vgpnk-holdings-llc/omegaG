@@ -9,17 +9,22 @@
 ///
 /// Runs on a dedicated OS thread with a Win32 message pump.
 /// The async runtime sends [`TrayCmd`] messages to update menu state.
-
 use std::path::PathBuf;
-use std::sync::{Arc, atomic::{AtomicBool, Ordering}, mpsc};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+    mpsc,
+};
 
-use tray_icon::{Icon, TrayIconBuilder};
 use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
+use tray_icon::{Icon, TrayIconBuilder};
 
+#[cfg(windows)]
 use windows_sys::Win32::System::Console::GetConsoleWindow;
+#[cfg(windows)]
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    DeleteMenu, DispatchMessageW, GetSystemMenu, PeekMessageW, ShowWindow,
-    TranslateMessage, MF_BYCOMMAND, MSG, PM_REMOVE, SC_CLOSE, SW_HIDE, SW_SHOW,
+    DeleteMenu, DispatchMessageW, GetSystemMenu, MF_BYCOMMAND, MSG, PM_REMOVE, PeekMessageW,
+    SC_CLOSE, SW_HIDE, SW_SHOW, ShowWindow, TranslateMessage,
 };
 
 const ICON_SIZE: u32 = 32;
@@ -48,22 +53,22 @@ fn run(rx: mpsc::Receiver<TrayCmd>, mouse_stick_active: Arc<AtomicBool>) {
     let icon = make_icon(r, g, b);
 
     // Build context menu
-    let wispr_item    = MenuItem::new("Open Wispr Flow", true, None);
-    let restart_item  = MenuItem::new("Restart", true, None);
-    let update_item   = MenuItem::new("Check for Update", true, None);
-    let startup_item  = CheckMenuItem::new("Enable auto start-up", true, auto_start_enabled, None);
-    let stick_item    = CheckMenuItem::new("Mouse: Left Stick", true, stick_initially, None);
-    let log_item      = CheckMenuItem::new("Show Log Window", true, false, None);
-    let exit_item     = MenuItem::new("Exit", true, None);
+    let wispr_item = MenuItem::new("Open Wispr Flow", true, None);
+    let restart_item = MenuItem::new("Restart", true, None);
+    let update_item = MenuItem::new("Check for Update", true, None);
+    let startup_item = CheckMenuItem::new("Enable auto start-up", true, auto_start_enabled, None);
+    let stick_item = CheckMenuItem::new("Mouse: Left Stick", true, stick_initially, None);
+    let log_item = CheckMenuItem::new("Show Log Window", true, false, None);
+    let exit_item = MenuItem::new("Exit", true, None);
 
     // Capture IDs for event matching
-    let wispr_id   = wispr_item.id().clone();
+    let wispr_id = wispr_item.id().clone();
     let restart_id = restart_item.id().clone();
-    let update_id  = update_item.id().clone();
+    let update_id = update_item.id().clone();
     let startup_id = startup_item.id().clone();
-    let stick_id   = stick_item.id().clone();
-    let log_id     = log_item.id().clone();
-    let exit_id    = exit_item.id().clone();
+    let stick_id = stick_item.id().clone();
+    let log_id = log_item.id().clone();
+    let exit_id = exit_item.id().clone();
 
     let menu = Menu::new();
     menu.append(&wispr_item).expect("menu append");
@@ -72,7 +77,8 @@ fn run(rx: mpsc::Receiver<TrayCmd>, mouse_stick_active: Arc<AtomicBool>) {
     menu.append(&startup_item).expect("menu append");
     menu.append(&stick_item).expect("menu append");
     menu.append(&log_item).expect("menu append");
-    menu.append(&PredefinedMenuItem::separator()).expect("menu append");
+    menu.append(&PredefinedMenuItem::separator())
+        .expect("menu append");
     menu.append(&exit_item).expect("menu append");
 
     let tray = match TrayIconBuilder::new()
@@ -94,13 +100,7 @@ fn run(rx: mpsc::Receiver<TrayCmd>, mouse_stick_active: Arc<AtomicBool>) {
 
     loop {
         // Pump Win32 messages so the tray icon stays responsive.
-        unsafe {
-            let mut msg: MSG = std::mem::zeroed();
-            while PeekMessageW(&mut msg, std::ptr::null_mut(), 0, 0, PM_REMOVE) != 0 {
-                TranslateMessage(&msg);
-                DispatchMessageW(&msg);
-            }
-        }
+        pump_win32_messages();
 
         // Handle menu events
         while let Ok(event) = MenuEvent::receiver().try_recv() {
@@ -111,7 +111,7 @@ fn run(rx: mpsc::Receiver<TrayCmd>, mouse_stick_active: Arc<AtomicBool>) {
             } else if event.id == wispr_id {
                 open_wispr_flow();
             } else if event.id == update_id {
-                std::thread::spawn(|| crate::update::check_for_update());
+                std::thread::spawn(crate::update::check_for_update);
             } else if event.id == startup_id {
                 // CheckMenuItem auto-toggles on click; is_checked() reflects new state
                 set_auto_start(startup_item.is_checked());
@@ -122,21 +122,7 @@ fn run(rx: mpsc::Receiver<TrayCmd>, mouse_stick_active: Arc<AtomicBool>) {
                 log::info!("Mouse cursor mode: {mode}");
             } else if event.id == log_id {
                 let show = log_item.is_checked();
-                unsafe {
-                    let console = GetConsoleWindow();
-                    if !console.is_null() {
-                        if show {
-                            ShowWindow(console, SW_SHOW);
-                            // Disable the X button so the user can't accidentally kill the process
-                            let hmenu = GetSystemMenu(console, 0);
-                            if !hmenu.is_null() {
-                                DeleteMenu(hmenu, SC_CLOSE as u32, MF_BYCOMMAND);
-                            }
-                        } else {
-                            ShowWindow(console, SW_HIDE);
-                        }
-                    }
-                }
+                toggle_log_window(show);
                 log::info!("Log window: {}", if show { "shown" } else { "hidden" });
             }
         }
@@ -188,17 +174,40 @@ fn find_wispr_flow() -> Option<PathBuf> {
     let mut candidates: Vec<PathBuf> = Vec::new();
 
     if let Ok(local) = std::env::var("LOCALAPPDATA") {
-        candidates.push(PathBuf::from(&local).join("WisprFlow").join("Wispr Flow.exe"));
-        candidates.push(PathBuf::from(&local).join("Programs").join("Wispr Flow").join("Wispr Flow.exe"));
-        candidates.push(PathBuf::from(&local).join("Programs").join("wispr-flow").join("Wispr Flow.exe"));
-        candidates.push(PathBuf::from(&local).join("Programs").join("WisprFlow").join("WisprFlow.exe"));
+        candidates.push(
+            PathBuf::from(&local)
+                .join("WisprFlow")
+                .join("Wispr Flow.exe"),
+        );
+        candidates.push(
+            PathBuf::from(&local)
+                .join("Programs")
+                .join("Wispr Flow")
+                .join("Wispr Flow.exe"),
+        );
+        candidates.push(
+            PathBuf::from(&local)
+                .join("Programs")
+                .join("wispr-flow")
+                .join("Wispr Flow.exe"),
+        );
+        candidates.push(
+            PathBuf::from(&local)
+                .join("Programs")
+                .join("WisprFlow")
+                .join("WisprFlow.exe"),
+        );
     }
     if let Ok(pf) = std::env::var("PROGRAMFILES") {
         candidates.push(PathBuf::from(&pf).join("Wispr Flow").join("Wispr Flow.exe"));
         candidates.push(PathBuf::from(&pf).join("WisprFlow").join("Wispr Flow.exe"));
     }
     if let Ok(pf86) = std::env::var("PROGRAMFILES(X86)") {
-        candidates.push(PathBuf::from(&pf86).join("Wispr Flow").join("Wispr Flow.exe"));
+        candidates.push(
+            PathBuf::from(&pf86)
+                .join("Wispr Flow")
+                .join("Wispr Flow.exe"),
+        );
     }
 
     candidates.into_iter().find(|p| p.exists())
@@ -222,12 +231,12 @@ fn wispr_flow_from_app_paths() -> Option<PathBuf> {
     // Output format:  "    (Default)    REG_SZ    C:\path\to\Wispr Flow.exe"
     let stdout = String::from_utf8_lossy(&output.stdout);
     for line in stdout.lines() {
-        if line.contains("REG_SZ") {
-            if let Some(value) = line.split("REG_SZ").nth(1) {
-                let path = PathBuf::from(value.trim());
-                if path.exists() {
-                    return Some(path);
-                }
+        if line.contains("REG_SZ")
+            && let Some(value) = line.split("REG_SZ").nth(1)
+        {
+            let path = PathBuf::from(value.trim());
+            if path.exists() {
+                return Some(path);
             }
         }
     }
@@ -237,9 +246,10 @@ fn wispr_flow_from_app_paths() -> Option<PathBuf> {
 
 /// Show a Yes/No dialog when Wispr Flow can't be found.
 /// "Yes" opens the download page; "No" closes the dialog.
+#[cfg(windows)]
 fn prompt_download_wispr_flow() {
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        MessageBoxW, MB_ICONWARNING, MB_YESNO, IDYES,
+        IDYES, MB_ICONWARNING, MB_YESNO, MessageBoxW,
     };
 
     let text: Vec<u16> = "Wispr Flow couldn't be located. Speech to Text won't work without it.\n\nWant to download?"
@@ -261,20 +271,32 @@ fn prompt_download_wispr_flow() {
     };
 
     if result == IDYES {
-        // Open default browser to the Wispr Flow website
         let _ = std::process::Command::new("explorer.exe")
             .arg("https://ref.wisprflow.ai/vgpnk")
             .spawn();
     }
 }
 
+#[cfg(not(windows))]
+fn prompt_download_wispr_flow() {
+    log::warn!("Wispr Flow not found (https://wisprflow.ai)");
+}
+
 fn restart_app() {
-    if let Ok(exe) = std::env::current_exe() {
-        if let Err(e) = std::process::Command::new(&exe).spawn() {
-            log::error!("Failed to restart: {e}");
+    // If we cannot resolve our own path, log and return — do NOT fall through to
+    // exit(0), which would terminate the app permanently without restarting.
+    let exe = match std::env::current_exe() {
+        Ok(exe) => exe,
+        Err(e) => {
+            log::error!("Cannot determine exe path to restart: {e}");
             return;
         }
+    };
+    if let Err(e) = std::process::Command::new(&exe).spawn() {
+        log::error!("Failed to restart: {e}");
+        return;
     }
+    // Only exit once the replacement process has been spawned successfully.
     std::process::exit(0);
 }
 
@@ -297,7 +319,17 @@ fn set_auto_start(enabled: bool) {
         // Quote path to handle spaces
         let value = format!("\"{}\"", exe.to_string_lossy());
         let status = std::process::Command::new("reg")
-            .args(["add", REG_RUN_KEY, "/v", APP_NAME, "/t", "REG_SZ", "/d", &value, "/f"])
+            .args([
+                "add",
+                REG_RUN_KEY,
+                "/v",
+                APP_NAME,
+                "/t",
+                "REG_SZ",
+                "/d",
+                &value,
+                "/f",
+            ])
             .status();
         match status {
             Ok(s) if s.success() => log::info!("Auto-start enabled: {value}"),
@@ -315,6 +347,49 @@ fn set_auto_start(enabled: bool) {
         }
     }
 }
+
+// ── Platform helpers ──────────────────────────────────────────────────
+
+/// Pump the Win32 message queue so the tray icon responds to clicks.
+/// On non-Windows the tray crate's own event system handles delivery.
+#[cfg(windows)]
+fn pump_win32_messages() {
+    unsafe {
+        let mut msg: MSG = std::mem::zeroed();
+        while PeekMessageW(&mut msg, std::ptr::null_mut(), 0, 0, PM_REMOVE) != 0 {
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn pump_win32_messages() {}
+
+/// Show or hide the console log window.
+/// On Windows, controls the Win32 console window via ShowWindow.
+/// On non-Windows this is a no-op (terminal output is always visible).
+#[cfg(windows)]
+fn toggle_log_window(show: bool) {
+    unsafe {
+        let console = GetConsoleWindow();
+        if !console.is_null() {
+            if show {
+                ShowWindow(console, SW_SHOW);
+                // Disable the X button so the user can't accidentally close the process
+                let hmenu = GetSystemMenu(console, 0);
+                if !hmenu.is_null() {
+                    DeleteMenu(hmenu, SC_CLOSE, MF_BYCOMMAND);
+                }
+            } else {
+                ShowWindow(console, SW_HIDE);
+            }
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn toggle_log_window(_show: bool) {}
 
 // ── Embedded controller PNG ────────────────────────────────────────────
 
@@ -342,9 +417,7 @@ fn make_icon(r: u8, g: u8, b: u8) -> Icon {
     let mut rgba = Vec::with_capacity((ICON_SIZE * ICON_SIZE * 4) as usize);
     for pixel in img.pixels() {
         // Rec. 601 luminance (0–255): white silhouette → high, black bg → low.
-        let lum = (pixel[0] as u32 * 299
-            + pixel[1] as u32 * 587
-            + pixel[2] as u32 * 114) / 1000;
+        let lum = (pixel[0] as u32 * 299 + pixel[1] as u32 * 587 + pixel[2] as u32 * 114) / 1000;
         let tr = (r as u32 * lum / 255) as u8;
         let tg = (g as u32 * lum / 255) as u8;
         let tb = (b as u32 * lum / 255) as u8;
@@ -362,5 +435,24 @@ mod tests {
     fn icon_loads() {
         let (r, g, b) = ICON_COLOR;
         make_icon(r, g, b); // must not panic
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn pump_win32_messages_noop_on_non_windows() {
+        pump_win32_messages(); // must not panic
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn toggle_log_window_noop_on_non_windows() {
+        toggle_log_window(true); // must not panic
+        toggle_log_window(false);
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn prompt_download_noop_on_non_windows() {
+        prompt_download_wispr_flow(); // must not panic
     }
 }

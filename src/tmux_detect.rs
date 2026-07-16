@@ -3,7 +3,6 @@
 /// Consumes the text of `tmux show-options -g prefix`, `tmux list-keys -T prefix`,
 /// and `~/.tmux.conf` (fallback when the server isn't running), and parses tmux
 /// key notation (C-a, M-n, etc.) into VKey combos. Pure functions — no I/O.
-
 use crate::mapper::VKey;
 use std::collections::HashMap;
 
@@ -120,12 +119,14 @@ fn insert_binding(actions: &mut HashMap<String, Vec<VKey>>, command: String, vke
         return;
     }
     // Store full command (e.g., "resize-pane -Z")
-    actions.entry(command.clone()).or_insert_with(|| vkeys.clone());
+    actions
+        .entry(command.clone())
+        .or_insert_with(|| vkeys.clone());
     // Also store base command (e.g., "resize-pane") if different
-    if let Some(base) = command.split_whitespace().next() {
-        if base != command {
-            actions.entry(base.to_string()).or_insert(vkeys);
-        }
+    if let Some(base) = command.split_whitespace().next()
+        && base != command
+    {
+        actions.entry(base.to_string()).or_insert(vkeys);
     }
 }
 
@@ -234,10 +235,11 @@ fn extract_command(tokens: &[&str]) -> String {
         }
         "command-prompt" => {
             // Pattern: command-prompt [...] { <cmd> ... }
-            if let Some(brace_idx) = tokens.iter().position(|&t| t == "{") {
-                if brace_idx + 1 < tokens.len() && tokens[brace_idx + 1] != "}" {
-                    return tokens[brace_idx + 1].to_string();
-                }
+            if let Some(brace_idx) = tokens.iter().position(|&t| t == "{")
+                && brace_idx + 1 < tokens.len()
+                && tokens[brace_idx + 1] != "}"
+            {
+                return tokens[brace_idx + 1].to_string();
             }
             String::new()
         }
@@ -347,7 +349,10 @@ fn named_key_to_vkey(s: &str) -> Option<VKey> {
 fn symbol_to_vkeys(c: char) -> Option<Vec<VKey>> {
     match c {
         'a'..='z' => Some(vec![VKey::from_name(&c.to_string())?]),
-        'A'..='Z' => Some(vec![VKey::Shift, VKey::from_name(&c.to_ascii_lowercase().to_string())?]),
+        'A'..='Z' => Some(vec![
+            VKey::Shift,
+            VKey::from_name(&c.to_ascii_lowercase().to_string())?,
+        ]),
         '0'..='9' => Some(vec![VKey::from_name(&c.to_string())?]),
         // Shifted digit symbols (US layout)
         '!' => Some(vec![VKey::Shift, VKey::D1]),
@@ -481,7 +486,12 @@ mod tests {
     fn extract_confirm_before() {
         // confirm-before -p "kill-window #W? (y/n)" kill-window
         let tokens = vec![
-            "confirm-before", "-p", "\"kill-window", "#W?", "(y/n)\"", "kill-window",
+            "confirm-before",
+            "-p",
+            "\"kill-window",
+            "#W?",
+            "(y/n)\"",
+            "kill-window",
         ];
         assert_eq!(extract_command(&tokens), "kill-window");
     }
@@ -490,7 +500,13 @@ mod tests {
     fn extract_command_prompt() {
         // command-prompt -I "#W" { rename-window "%%" }
         let tokens = vec![
-            "command-prompt", "-I", "\"#W\"", "{", "rename-window", "\"%%\"", "}",
+            "command-prompt",
+            "-I",
+            "\"#W\"",
+            "{",
+            "rename-window",
+            "\"%%\"",
+            "}",
         ];
         assert_eq!(extract_command(&tokens), "rename-window");
     }
