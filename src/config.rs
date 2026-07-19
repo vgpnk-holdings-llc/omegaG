@@ -14,6 +14,58 @@ pub struct Config {
     pub buttons: ButtonsConfig,
     pub tmux: TmuxConfig,
     pub launchers: HashMap<String, LauncherAction>,
+    pub codex_micro: CodexMicroConfig,
+}
+
+/// Opt-in Codex Micro semantic layer. Existing controller behavior is unchanged
+/// unless `enabled` is explicitly set.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct CodexMicroConfig {
+    pub enabled: bool,
+    /// Explicitly enable the semantic prototype without a runtime transport.
+    pub demo_mode: bool,
+    pub brightness: u8,
+    pub inactivity_seconds: u64,
+    pub analog_dead_zone: u8,
+    pub analog_hysteresis: u8,
+    /// recent | pinned | priority | custom
+    pub source_policy: String,
+    /// Exact thread IDs, in order, when source_policy = "custom".
+    pub custom_order: Vec<String>,
+    pub commands: HashMap<String, String>,
+    pub skills: HashMap<String, String>,
+}
+
+impl Default for CodexMicroConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            demo_mode: false,
+            brightness: 70,
+            inactivity_seconds: 180,
+            analog_dead_zone: 48,
+            analog_hysteresis: 12,
+            source_policy: "recent".into(),
+            custom_order: Vec::new(),
+            commands: HashMap::new(),
+            skills: HashMap::new(),
+        }
+    }
+}
+
+impl CodexMicroConfig {
+    pub fn normalize(&mut self) {
+        self.brightness = self.brightness.min(100);
+        self.analog_dead_zone = self.analog_dead_zone.clamp(1, 127);
+        self.analog_hysteresis = self
+            .analog_hysteresis
+            .min(self.analog_dead_zone.saturating_sub(1));
+    }
+
+    pub fn prototype_active(&self) -> bool {
+        self.enabled && self.demo_mode
+    }
 }
 
 /// Named launcher actions for "launcher:<name>" button values.
@@ -198,6 +250,7 @@ impl Default for Config {
             buttons: ButtonsConfig::default(),
             tmux: TmuxConfig::default(),
             launchers,
+            codex_micro: CodexMicroConfig::default(),
         }
     }
 }
@@ -222,6 +275,7 @@ impl Config {
                 Ok(mut config) => {
                     log::info!("Loaded config from {config_path}");
                     Self::merge_default_launchers(&mut config.launchers);
+                    config.codex_micro.normalize();
                     config
                 }
                 Err(e) => {
@@ -288,6 +342,28 @@ mod tests {
         assert_eq!(config.scroll.dead_zone, 20);
         assert_eq!(config.buttons.l1, "previous-window");
         assert!(config.touchpad.enabled);
+        assert!(!config.codex_micro.enabled);
+        assert_eq!(config.codex_micro.source_policy, "recent");
+        assert!(config.codex_micro.custom_order.is_empty());
+    }
+
+    #[test]
+    fn deserialize_partial_codex_micro_uses_defaults_and_normalizes() {
+        let mut config: Config = toml::from_str(
+            r#"
+            [codex_micro]
+            enabled = true
+            analog_dead_zone = 0
+            analog_hysteresis = 200
+            "#,
+        )
+        .unwrap();
+        assert!(!config.codex_micro.demo_mode);
+        assert_eq!(config.codex_micro.brightness, 70);
+        assert_eq!(config.codex_micro.inactivity_seconds, 180);
+        config.codex_micro.normalize();
+        assert_eq!(config.codex_micro.analog_dead_zone, 1);
+        assert_eq!(config.codex_micro.analog_hysteresis, 0);
     }
 
     #[test]

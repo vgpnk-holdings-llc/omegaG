@@ -1,3 +1,4 @@
+mod codex_micro;
 mod config;
 mod controller;
 mod crc32;
@@ -17,8 +18,48 @@ use crate::controller::ConnectionType;
 use crate::output::OutputState;
 
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::time::{Duration, sleep};
+
+const ORDINARY_ACTION_LIMIT: usize = 28;
+
+#[derive(Debug)]
+enum EnqueueError {
+    Full,
+    Closed,
+}
+
+fn enqueue_action(
+    tx: &tokio::sync::mpsc::UnboundedSender<mapper::Action>,
+    ordinary_pending: &std::sync::atomic::AtomicUsize,
+    action: mapper::Action,
+) -> Result<(), EnqueueError> {
+    let ordinary = !action.is_safety_release();
+    if ordinary
+        && ordinary_pending
+            .fetch_update(Ordering::AcqRel, Ordering::Relaxed, |pending| {
+                (pending < ORDINARY_ACTION_LIMIT).then_some(pending + 1)
+            })
+            .is_err()
+    {
+        return Err(EnqueueError::Full);
+    }
+    tx.send(action).map_err(|error| {
+        if ordinary {
+            ordinary_pending.fetch_sub(1, Ordering::AcqRel);
+        }
+        let _ = error;
+        EnqueueError::Closed
+    })
+}
+
+fn suppress_semantic_input(input: &mut input::UnifiedInput) {
+    input.buttons = input::ButtonState::default();
+    input.left_stick = (128, 128);
+    input.right_stick = (128, 128);
+    input.touchpad = [input::TouchPoint::default(); 2];
+}
 
 #[tokio::main]
 async fn main() {
@@ -54,7 +95,21 @@ async fn main() {
 
     log::info!("DS4CC v3 starting...");
 
-    let cfg = config::Config::load();
+    let mut cfg = config::Config::load();
+    cfg.codex_micro.normalize();
+    if cfg.codex_micro.enabled && !cfg.codex_micro.demo_mode {
+        log::warn!(
+            "OmegaG prototype requested but demo_mode=false; preserving all legacy controls"
+        );
+    }
+    let mut initial_codex_state = codex_micro::CodexMicro::default();
+    initial_codex_state.configure_sources(
+        codex_micro::SourcePolicy::parse(&cfg.codex_micro.source_policy),
+        cfg.codex_micro.custom_order.clone(),
+    );
+    let codex_state = Arc::new(Mutex::new(initial_codex_state));
+    let started = std::time::Instant::now();
+    let mut codex_generation = 0u64;
 
     // Detect keybinds (tmux prefix + bindings, Claude Code keybindings.json)
     // in a single WSL round-trip. Best-effort — defaults cover any gap.
@@ -106,6 +161,12 @@ async fn main() {
             info.controller_type,
             info.connection_type
         );
+        codex_generation += 1;
+        codex_state
+            .lock()
+            .expect("codex state poisoned")
+            .begin_generation(codex_generation)
+            .expect("connection generations are sequential");
         if bt_paired && info.connection_type == ConnectionType::Usb {
             log::info!("Bluetooth also paired — will serve as fallback if USB is disconnected");
         }
@@ -175,8 +236,19 @@ async fn main() {
         // Spawn output loop for this connection
         let output_handle = handle.clone_handle();
         let lightbar_color = cfg.lightbar.clone();
+        let codex_output = Arc::clone(&codex_state);
+        let codex_cfg = cfg.codex_micro.clone();
         let output_task = tokio::spawn(async move {
-            run_output_loop(output_handle, ct, conn, lightbar_color).await;
+            run_output_loop(
+                output_handle,
+                ct,
+                conn,
+                lightbar_color,
+                codex_output,
+                codex_cfg,
+                started,
+            )
+            .await;
         });
 
         // Run input loop — returns when device disconnects or USB scanner signals
@@ -188,6 +260,9 @@ async fn main() {
             &detected,
             Arc::clone(&mouse_stick_active),
             usb_available.clone(),
+            Arc::clone(&codex_state),
+            started,
+            codex_generation,
         )
         .await;
 
@@ -217,6 +292,7 @@ async fn main() {
 
 /// Input loop: read HID reports, parse, map to keystrokes.
 /// Returns when the device disconnects or `usb_switch_flag` is set (BT→USB switch).
+#[allow(clippy::too_many_arguments)]
 async fn run_input_loop(
     handle: hid::HidHandle,
     ct: controller::ControllerType,
@@ -225,18 +301,38 @@ async fn run_input_loop(
     detected: &detect::Detected,
     mouse_stick_active: Arc<AtomicBool>,
     usb_switch_flag: Option<Arc<AtomicBool>>,
+    codex_state: Arc<Mutex<codex_micro::CodexMicro>>,
+    started: std::time::Instant,
+    codex_generation: u64,
 ) {
     let mut mapper_state = mapper::MapperState::new(cfg, detected, mouse_stick_active);
+    let mut codex_dispatcher =
+        codex_micro::Dispatcher::new(codex_micro::UnavailableTransport, codex_generation);
+    // Semantic releases never enter the bounded/droppable generic action queue.
+    // Dispatch them synchronously at the transport boundary before reading input.
+    let reconnect_actions = codex_state
+        .lock()
+        .expect("codex state poisoned")
+        .reconnect();
+    for action in reconnect_actions {
+        let result = codex_dispatcher.dispatch(action);
+        log::warn!("Codex Micro reconnect release: {result:?}");
+    }
     let mut consecutive_errors = 0u32;
     let mut first_report = true;
     let mut last_mute = false;
     let mut running = true;
-    // Bounded FIFO queue: decouples HID polling from action execution.
-    // try_send never blocks the poll loop; Full drops the action and logs.
-    // 32 slots absorbs bursts (at 250 Hz, 32 slots = ~128ms of queued actions).
-    let (action_tx, mut action_rx) = tokio::sync::mpsc::channel::<mapper::Action>(32);
+    // FIFO queue: ordinary traffic is admission-limited without blocking HID.
+    // Safety KeyUp releases bypass that limit and therefore cannot be dropped
+    // by motion/repeat saturation.
+    let (action_tx, mut action_rx) = tokio::sync::mpsc::unbounded_channel::<mapper::Action>();
+    let ordinary_pending = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let worker_pending = Arc::clone(&ordinary_pending);
     let action_worker = tokio::spawn(async move {
         while let Some(action) = action_rx.recv().await {
+            if !action.is_safety_release() {
+                worker_pending.fetch_sub(1, Ordering::AcqRel);
+            }
             // execute_action blocks (SendInput / process spawn + the 16 ms Enter
             // guard sleep). Run it on the blocking pool and await so the async
             // runtime is never starved; awaiting one action at a time preserves
@@ -291,17 +387,42 @@ async fn run_input_loop(
                 }
 
                 match input::parse(ct, conn, &data) {
-                    Ok(unified) => {
+                    Ok(mut unified) => {
                         consecutive_errors = 0;
+                        let now_ms = started.elapsed().as_millis() as u64;
+                        let (semantic_actions, consumed) = {
+                            let mut state = codex_state.lock().expect("codex state poisoned");
+                            let (actions, consumed) =
+                                state.update_input(&unified, now_ms, &cfg.codex_micro);
+                            (actions, consumed)
+                        };
+                        for action in semantic_actions {
+                            let result = codex_dispatcher.dispatch(action);
+                            match &result {
+                                codex_micro::DispatchResult::Applied(id) => {
+                                    log::info!("Codex Micro applied request {}", id.request_id)
+                                }
+                                codex_micro::DispatchResult::Rejected { action, error } => {
+                                    log::warn!("Codex Micro unavailable: {action:?}: {error:?}")
+                                }
+                            }
+                            codex_state
+                                .lock()
+                                .expect("codex state poisoned")
+                                .mark_dispatch(&result, now_ms);
+                        }
+                        if consumed {
+                            suppress_semantic_input(&mut unified);
+                        }
                         let actions = mapper_state.update(&unified);
                         for action in actions {
                             log::debug!("Action: {action:?}");
-                            match action_tx.try_send(action) {
+                            match enqueue_action(&action_tx, &ordinary_pending, action) {
                                 Ok(_) => {}
-                                Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                                Err(EnqueueError::Full) => {
                                     log::warn!("Action queue full — dropping action");
                                 }
-                                Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                                Err(EnqueueError::Closed) => {
                                     log::warn!("Action worker dropped; stopping input loop");
                                     running = false;
                                     break;
@@ -329,6 +450,15 @@ async fn run_input_loop(
             }
         }
     }
+    // A PTT stop is safety-critical and bypasses the generic action queue.
+    let stop_actions = codex_state
+        .lock()
+        .expect("codex state poisoned")
+        .reconnect();
+    for action in stop_actions {
+        let result = codex_dispatcher.dispatch(action);
+        log::warn!("Codex Micro disconnect release: {result:?}");
+    }
     drop(action_tx);
     action_worker.await.ok();
 }
@@ -342,6 +472,9 @@ async fn run_output_loop(
     ct: controller::ControllerType,
     conn: controller::ConnectionType,
     lightbar_color: config::ColorConfig,
+    codex_state: Arc<Mutex<codex_micro::CodexMicro>>,
+    codex_cfg: config::CodexMicroConfig,
+    started: std::time::Instant,
 ) {
     let mut bt_seq = 0u8;
 
@@ -354,10 +487,16 @@ async fn run_output_loop(
 
     loop {
         ticker.tick().await;
+        let rgb = codex_micro::compose_rgb(
+            &codex_state.lock().expect("codex state poisoned"),
+            &codex_cfg,
+            [lightbar_color.r, lightbar_color.g, lightbar_color.b],
+            started.elapsed().as_millis() as u64,
+        );
         let out = OutputState {
-            lightbar_r: lightbar_color.r,
-            lightbar_g: lightbar_color.g,
-            lightbar_b: lightbar_color.b,
+            lightbar_r: rgb[0],
+            lightbar_g: rgb[1],
+            lightbar_b: rgb[2],
             rumble_left: 0,
             rumble_right: 0,
             player_leds: PLAYER_LEDS,
@@ -370,6 +509,8 @@ async fn run_output_loop(
 
 #[cfg(test)]
 mod tests {
+    use super::{ORDINARY_ACTION_LIMIT, enqueue_action, suppress_semantic_input};
+    use crate::mapper::{Action, VKey};
     /// Regression for the action worker: draining the bounded FIFO and awaiting
     /// each `spawn_blocking` execution one at a time must preserve exact input
     /// order. This mirrors the `action_worker` loop structure (recv → await
@@ -394,5 +535,45 @@ mod tests {
 
         let expected: Vec<usize> = (0..16).map(|i| i * 10).collect();
         assert_eq!(executed, expected, "FIFO order must be preserved exactly");
+    }
+
+    #[tokio::test]
+    async fn saturated_motion_queue_retains_release_reserve() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let pending = std::sync::atomic::AtomicUsize::new(0);
+        let mut dropped = false;
+        for _ in 0..=ORDINARY_ACTION_LIMIT {
+            if enqueue_action(&tx, &pending, Action::MouseMove { dx: 1, dy: 1 }).is_err() {
+                dropped = true;
+                break;
+            }
+        }
+        assert!(dropped, "ordinary motion must stop before the reserve");
+        enqueue_action(&tx, &pending, Action::KeyUp(vec![VKey::Control])).unwrap();
+        drop(tx);
+        let mut saw_release = false;
+        while let Some(action) = rx.recv().await {
+            saw_release |= action.is_safety_release();
+        }
+        assert!(saw_release);
+    }
+
+    #[test]
+    fn exclusive_semantic_input_suppresses_buttons_sticks_and_touch() {
+        let mut input = crate::input::UnifiedInput::default();
+        input.buttons.cross = true;
+        input.buttons.mute = true;
+        input.left_stick = (0, 255);
+        input.right_stick = (255, 0);
+        input.touchpad[0] = crate::input::TouchPoint {
+            active: true,
+            x: 900,
+            y: 500,
+        };
+        suppress_semantic_input(&mut input);
+        assert_eq!(input.buttons, crate::input::ButtonState::default());
+        assert_eq!(input.left_stick, (128, 128));
+        assert_eq!(input.right_stick, (128, 128));
+        assert_eq!(input.touchpad, [crate::input::TouchPoint::default(); 2]);
     }
 }

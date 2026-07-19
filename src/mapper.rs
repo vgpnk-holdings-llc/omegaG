@@ -309,6 +309,13 @@ pub enum Action {
     LauncherText { text: String, enter: bool },
 }
 
+impl Action {
+    /// Releases must never compete with droppable motion/repeat traffic.
+    pub fn is_safety_release(&self) -> bool {
+        matches!(self, Self::KeyUp(_))
+    }
+}
+
 /// Key repeat timing.
 const REPEAT_DELAY_MS: u64 = 300; // hold before repeating
 const REPEAT_RATE_MS: u64 = 100; // interval between repeats

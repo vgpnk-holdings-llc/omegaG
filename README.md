@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="imgs/logo_nobg.png" alt="DS4CC" width="320">
+  <img src="imgs/logo_nobg.png" alt="omegaG" width="320">
 </p>
 
-<h1 align="center">DS4CC</h1>
+<h1 align="center">omegaG</h1>
 
 <p align="center">
   Turn a PlayStation controller into a shortcut mapper for terminal-first development.
@@ -16,13 +16,16 @@
 
 ## Mission
 
-One controller, one flat button map, zero ceremony. Buttons send real keystrokes — tmux window control, Claude Code shortcuts, arrows, Enter/Escape/Tab — plus mouse cursor, scroll, and mic mute. Keep the system simple.
+OmegaG explores safe controller semantics for coding workflows while retaining
+the proven DS4CC shortcut mapper and its simple defaults.
 
 ---
 
 ## What This Is
 
-DS4CC is a small Rust daemon that runs in the Windows tray and lets your PlayStation controller:
+OmegaG is a fork of [VeigaPunk/DS4CC](https://github.com/VeigaPunk/DS4CC).
+It preserves the `ds4cc` package, binary, configuration path, and MIT attribution
+for compatibility. The daemon runs in the Windows tray and lets your controller:
 
 - **Send keystrokes** — every button maps to a key combo or chord sequence
 - **Drive tmux** — window navigation on the shoulder buttons, keybinds auto-detected from your running tmux server via WSL
@@ -33,6 +36,11 @@ DS4CC is a small Rust daemon that runs in the Windows tray and lets your PlaySta
 - **Pair with [Wispr](https://ref.wisprflow.ai/vgpnk)** — voice handles text, controller handles everything else
 
 No hooks, no polling, no agent-state tracking, no profiles. It is a shortcut mapper.
+
+An optional **OmegaG Codex controller prototype** provides a testable semantic
+engine. Exact ChatGPT desktop parity is impossible through public APIs today.
+The prototype is disabled by default and cannot consume legacy controls unless
+both `enabled` and the explicit transportless `demo_mode` are true.
 
 ---
 
@@ -128,7 +136,96 @@ dead_zone = 15
 r = 255
 g = 140
 b = 0
+
+[codex_micro]
+enabled = false             # opt in; legacy defaults remain untouched
+demo_mode = false           # required without a real runtime transport
+brightness = 70             # 0..100
+inactivity_seconds = 180    # lightbar sleeps after three minutes
+analog_dead_zone = 48
+analog_hysteresis = 12
+source_policy = "recent"    # recent | pinned | priority | custom
+custom_order = []           # exact thread IDs for custom policy
+
+[codex_micro.commands]      # named structured actions for a future transport
+review = "review"
+[codex_micro.skills]
+test = "test"
 ```
+
+## OmegaG Codex controller prototype
+
+### Controller layer
+
+Hold **PS** to enter the discoverable, exclusive modifier layer. While held:
+
+| Control | Semantic intent |
+|---|---|
+| L1 / R1 | Previous / next of six chat slots |
+| Cross / Circle | Approve / decline |
+| Square | Toggle Fast |
+| Triangle | Send |
+| Options | Continue in new chat |
+| L2 | Hold starts/release stops; second press within 350 ms toggles hands-free latch; next press stops |
+| Right stick cardinal | Four analog actions with dead zone + hysteresis |
+| D-pad up/down | Reasoning level up/down (0–4) |
+| L3 / R3 | First configured command / skill (sorted by configured name) |
+| Touchpad press | Select; second press within 350 ms activates |
+
+The semantic model has exactly six slots, `recent`, `pinned`, `priority`, and
+`custom` source policies, and `idle`, `thinking`, `complete-unread`,
+`requires-input`, `error`, and `unassigned` states. A press selects; a second
+press within 350 ms (inclusive) activates. Composer reasoning is quantized and
+clamped to levels 0–4. Commands and skills produce typed mutation intents only;
+they are unavailable with the shipped transport.
+
+### Feedback
+
+Status RGB uses white (idle), blue (thinking), green (complete unread), amber
+(input required), red (error), and off (unassigned). The lightbar projects the
+selected chat only; `priority` controls slot ordering, not status selection.
+The selected projection pulses at 500 ms, honors configured brightness, sleeps
+after 180 seconds by default, and wakes on modifier input. RGB is composed into
+the **existing single HID output loop**; there is no second writer. The same
+report builders cover DualSense and DS4 over USB and Bluetooth. A controller
+lightbar is lossy: it can show one selected status, not six colors at once; DS4
+has no player or mute LEDs. A rejected mutation turns feedback red and logs the
+exact action/error instead of silently discarding it.
+
+### Security and current transport limit
+
+Mutation identities include connection generation, JSON-RPC request ID, method,
+thread, turn, item, and optional approval ID. The gate rejects stale generations,
+duplicates, method mismatches, and context mismatches. The transport is currently a typed,
+fail-closed `UnavailableTransport`: approve, decline, PTT, Send, Fast, and other
+mutations are **not** translated into focus-based keystrokes and are not sent
+until a documented Codex app-server transport is implemented. Thus modifier
+inputs are safely consumed rather than injected into an arbitrary focused app.
+Existing generic mappings outside the modifier remain unchanged. Reconnect
+neutralizes held/latching state, emits a PTT stop intent where necessary, and
+requires a neutral controller frame before accepting presses. Semantic releases
+bypass generic action admission limits, and legacy `KeyUp` releases cannot be
+dropped by saturated motion traffic. In active demo mode the exclusive modifier
+suppresses buttons, both sticks, and touch coordinates. No undocumented desktop
+API or deep link is used; navigation also fails closed in this iteration.
+
+The reducer accepts typed generation/sequence-guarded snapshots, upserts, exact
+context status events, and removals. It deterministically arranges recent,
+pinned, priority, or custom sources into six slots. There is no runtime event
+source yet because no authenticated app-server transport is shipped; therefore
+slots remain unassigned in production rather than presenting fabricated state.
+
+### Capability matrix
+
+- [x] Six-slot typed reducer, statuses, source arrangement, ordering/generation guards
+- [x] Inclusive 350 ms slot activation and PTT double-press state machine
+- [x] Cardinal analog neutral hysteresis and bounded physical reasoning control
+- [x] Selected-status RGB/pulse/brightness/sleep/wake through the sole output loop
+- [x] Full mutation identity validation, reconnect neutral gating, release bypass
+- [x] Backward-compatible opt-in configuration and deterministic pure tests
+- [ ] Fast/approve/decline/new-chat/PTT/send/command/skill mutations (typed and visibly rejected; unavailable at runtime)
+- [ ] Codex app-server session/authentication and runtime event ingestion
+- [ ] Thread deep-link navigation (withheld until a documented supported URI is verified)
 
 ---
 
