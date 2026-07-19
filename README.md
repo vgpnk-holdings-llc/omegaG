@@ -37,10 +37,10 @@ for compatibility. The daemon runs in the Windows tray and lets your controller:
 
 No hooks, no polling, no agent-state tracking, no profiles. It is a shortcut mapper.
 
-An optional **OmegaG Codex controller prototype** provides a testable semantic
+An optional **OmegaG Codex controller runtime** provides a testable semantic
 engine. Exact ChatGPT desktop parity is impossible through public APIs today.
-The prototype is disabled by default and cannot consume legacy controls unless
-both `enabled` and the explicit transportless `demo_mode` are true.
+The runtime is disabled by default and cannot consume legacy controls unless
+`enabled = true`. It talks only to a supervised local `codex app-server --stdio`.
 
 ---
 
@@ -139,7 +139,15 @@ b = 0
 
 [codex_micro]
 enabled = false             # opt in; legacy defaults remain untouched
-demo_mode = false           # required without a real runtime transport
+codex_executable = "codex"   # PATH name, or an absolute Windows/WSL path
+cwd = ""                     # empty = process working directory
+request_timeout_ms = 15000
+reconnect_min_ms = 250
+reconnect_max_ms = 8000
+composer_limit = 16384
+voice_argv = []              # e.g. ["C:\\Tools\\stt.exe", "--capture"]
+voice_timeout_ms = 30000
+voice_output_limit = 16384
 brightness = 70             # 0..100
 inactivity_seconds = 180    # lightbar sleeps after three minutes
 analog_dead_zone = 48
@@ -147,13 +155,16 @@ analog_hysteresis = 12
 source_policy = "recent"    # recent | pinned | priority | custom
 custom_order = []           # exact thread IDs for custom policy
 
-[codex_micro.commands]      # named structured actions for a future transport
-review = "review"
+[codex_micro.commands]      # exact prompt text submitted as a turn
+review = "Review the current changes."
 [codex_micro.skills]
-test = "test"
+test = "test"               # exact current advertised skill name or path
+[codex_micro.cardinal_actions]
+up = "Summarize progress."
+right = "Run the configured checks."
 ```
 
-## OmegaG Codex controller prototype
+## OmegaG Codex controller runtime
 
 ### Controller layer
 
@@ -162,22 +173,23 @@ Hold **PS** to enter the discoverable, exclusive modifier layer. While held:
 | Control | Semantic intent |
 |---|---|
 | L1 / R1 | Previous / next of six chat slots |
-| Cross / Circle | Approve / decline |
-| Square | Toggle Fast |
-| Triangle | Send |
-| Options | Continue in new chat |
+| Share | Create a blank thread (`thread/start`) |
+| Cross / Circle | One-shot accept / decline for selected armed approval |
+| Square | Toggle advertised `priority` tier for subsequent turns |
+| Triangle | Send bounded composer (`turn/start`) |
+| Options | Fork selected thread (`thread/fork`) |
 | L2 | Hold starts/release stops; second press within 350 ms toggles hands-free latch; next press stops |
 | Right stick cardinal | Four analog actions with dead zone + hysteresis |
-| D-pad up/down | Reasoning level up/down (0–4) |
+| D-pad up/down | Previous / next model-advertised reasoning effort |
 | L3 / R3 | First configured command / skill (sorted by configured name) |
-| Touchpad press | Select; second press within 350 ms activates |
+| Touchpad press | Select; second press reads and resumes |
 
 The semantic model has exactly six slots, `recent`, `pinned`, `priority`, and
 `custom` source policies, and `idle`, `thinking`, `complete-unread`,
 `requires-input`, `error`, and `unassigned` states. A press selects; a second
-press within 350 ms (inclusive) activates. Composer reasoning is quantized and
-clamped to levels 0–4. Commands and skills produce typed mutation intents only;
-they are unavailable with the shipped transport.
+press within 350 ms (inclusive) activates. Reasoning indexes the model-advertised
+efforts. Commands/cardinals submit configured prompt text; skill favorites are
+resolved against the current exact advertised name/path before submission.
 
 ### Feedback
 
@@ -189,31 +201,44 @@ after 180 seconds by default, and wakes on modifier input. RGB is composed into
 the **existing single HID output loop**; there is no second writer. The same
 report builders cover DualSense and DS4 over USB and Bluetooth. A controller
 lightbar is lossy: it can show one selected status, not six colors at once; DS4
-has no player or mute LEDs. A rejected mutation turns feedback red and logs the
-exact action/error instead of silently discarding it.
+has no player or mute LEDs. A rejected mutation turns feedback red and logs a
+sanitized error without command or transcript bodies.
 
-### Security and current transport limit
+### Runtime, setup, and safety
 
-Mutation identities include connection generation, JSON-RPC request ID, method,
-thread, turn, item, and optional approval ID. The gate rejects stale generations,
-duplicates, method mismatches, and context mismatches. The transport is currently a typed,
-fail-closed `UnavailableTransport`: approve, decline, PTT, Send, Fast, and other
-mutations are **not** translated into focus-based keystrokes and are not sent
-until a documented Codex app-server transport is implemented. Thus modifier
-inputs are safely consumed rather than injected into an arbitrary focused app.
+Install exactly `codex-cli 0.145.0-alpha.24`, verify `codex --version`, authenticate
+Codex normally, and set `enabled = true`. omegaG starts local
+`codex app-server --stdio`, performs initialize → response → initialized, then
+requests model, thread, and skill catalogs. Version mismatch, malformed/oversized
+frames, queue pressure, timeout, and EOF fail closed and reconnect with bounded
+backoff. Server epochs remain independent of controller HID reconnects. This is
+controller-native behavior comparable to a Codex frontend, not literal keyboard
+hardware emulation, and it performs no ChatGPT desktop automation.
+
+Approvals retain the original inbound JSON-RPC ID plus server epoch, method,
+thread, turn, item, and optional approval ID. Cross/Circle are enabled only for
+the selected armed request and can return only one-shot `accept` or `decline`.
+Command bodies and voice transcripts are never logged. Queue admission is not
+reported as completion: mutating controls turn green only after local validation
+and the correlated app-server response. Voice adapters require an absolute
+executable, run argv directly without a shell, begin on L2 press, treat stdin EOF
+on release as the stop signal, and write only the final transcript to stdout.
+Hard process, timeout, output, and composer limits apply. On Windows use a native
+absolute path; under WSL, run omegaG and the adapter in the same environment so
+paths remain valid. Controller, app-server, and application shutdown cancel and
+reap an active capture instead of finalizing a partial transcript. Adapters must
+remain in the launched process and must not daemonize detached helper processes.
+
 Existing generic mappings outside the modifier remain unchanged. Reconnect
 neutralizes held/latching state, emits a PTT stop intent where necessary, and
 requires a neutral controller frame before accepting presses. Semantic releases
 bypass generic action admission limits, and legacy `KeyUp` releases cannot be
-dropped by saturated motion traffic. In active demo mode the exclusive modifier
+dropped by saturated motion traffic. In active runtime mode the exclusive modifier
 suppresses buttons, both sticks, and touch coordinates. No undocumented desktop
-API or deep link is used; navigation also fails closed in this iteration.
+API or deep link is used.
 
-The reducer accepts typed generation/sequence-guarded snapshots, upserts, exact
-context status events, and removals. It deterministically arranges recent,
-pinned, priority, or custom sources into six slots. There is no runtime event
-source yet because no authenticated app-server transport is shipped; therefore
-slots remain unassigned in production rather than presenting fabricated state.
+The reducer accepts authoritative generation/sequence-guarded snapshots,
+lifecycle/status/turn/error upserts, and removals into six slots.
 
 ### Capability matrix
 
@@ -223,9 +248,9 @@ slots remain unassigned in production rather than presenting fabricated state.
 - [x] Selected-status RGB/pulse/brightness/sleep/wake through the sole output loop
 - [x] Full mutation identity validation, reconnect neutral gating, release bypass
 - [x] Backward-compatible opt-in configuration and deterministic pure tests
-- [ ] Fast/approve/decline/new-chat/PTT/send/command/skill mutations (typed and visibly rejected; unavailable at runtime)
-- [ ] Codex app-server session/authentication and runtime event ingestion
-- [ ] Thread deep-link navigation (withheld until a documented supported URI is verified)
+- [x] Fast/approve/decline/start/fork/PTT/send/command/skill runtime effects
+- [x] Supervised app-server handshake, catalogs, events, bounds, and reconnect
+- [x] Supported thread read/resume activation without desktop automation
 
 ---
 

@@ -1,4 +1,7 @@
 mod codex_micro;
+mod codex_protocol;
+mod codex_runtime;
+mod codex_voice;
 mod config;
 mod controller;
 mod crc32;
@@ -97,11 +100,6 @@ async fn main() {
 
     let mut cfg = config::Config::load();
     cfg.codex_micro.normalize();
-    if cfg.codex_micro.enabled && !cfg.codex_micro.demo_mode {
-        log::warn!(
-            "OmegaG prototype requested but demo_mode=false; preserving all legacy controls"
-        );
-    }
     let mut initial_codex_state = codex_micro::CodexMicro::default();
     initial_codex_state.configure_sources(
         codex_micro::SourcePolicy::parse(&cfg.codex_micro.source_policy),
@@ -109,7 +107,40 @@ async fn main() {
     );
     let codex_state = Arc::new(Mutex::new(initial_codex_state));
     let started = std::time::Instant::now();
-    let mut codex_generation = 0u64;
+    let (codex_runtime, codex_events) = if cfg.codex_micro.enabled {
+        let (event_tx, event_rx) = std::sync::mpsc::sync_channel(128);
+        (
+            Some(codex_runtime::RuntimeHandle::spawn(
+                cfg.codex_micro.clone(),
+                event_tx,
+            )),
+            Some(event_rx),
+        )
+    } else {
+        (None, None)
+    };
+    if let Some(events) = codex_events {
+        let state = Arc::clone(&codex_state);
+        let _ = std::thread::Builder::new()
+            .name("codex-events".into())
+            .spawn(move || {
+                let mut epoch = 0;
+                while let Ok(event) = events.recv() {
+                    let mut state = state.lock().expect("codex state poisoned");
+                    if event.connection_generation != epoch {
+                        if state.begin_generation(event.connection_generation).is_err() {
+                            continue;
+                        }
+                        epoch = event.connection_generation;
+                    }
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_millis() as u64;
+                    let _ = state.reduce(event, now);
+                }
+            });
+    }
 
     // Detect keybinds (tmux prefix + bindings, Claude Code keybindings.json)
     // in a single WSL round-trip. Best-effort — defaults cover any gap.
@@ -161,12 +192,6 @@ async fn main() {
             info.controller_type,
             info.connection_type
         );
-        codex_generation += 1;
-        codex_state
-            .lock()
-            .expect("codex state poisoned")
-            .begin_generation(codex_generation)
-            .expect("connection generations are sequential");
         if bt_paired && info.connection_type == ConnectionType::Usb {
             log::info!("Bluetooth also paired — will serve as fallback if USB is disconnected");
         }
@@ -238,6 +263,9 @@ async fn main() {
         let lightbar_color = cfg.lightbar.clone();
         let codex_output = Arc::clone(&codex_state);
         let codex_cfg = cfg.codex_micro.clone();
+        let runtime_view = codex_runtime
+            .as_ref()
+            .map(|runtime| Arc::clone(&runtime.view));
         let output_task = tokio::spawn(async move {
             run_output_loop(
                 output_handle,
@@ -246,6 +274,7 @@ async fn main() {
                 lightbar_color,
                 codex_output,
                 codex_cfg,
+                runtime_view,
                 started,
             )
             .await;
@@ -262,7 +291,12 @@ async fn main() {
             usb_available.clone(),
             Arc::clone(&codex_state),
             started,
-            codex_generation,
+            codex_runtime
+                .as_ref()
+                .map(codex_runtime::RuntimeHandle::transport),
+            codex_runtime
+                .as_ref()
+                .map_or(0, |runtime| runtime.epoch.load(Ordering::Acquire)),
         )
         .await;
 
@@ -303,11 +337,15 @@ async fn run_input_loop(
     usb_switch_flag: Option<Arc<AtomicBool>>,
     codex_state: Arc<Mutex<codex_micro::CodexMicro>>,
     started: std::time::Instant,
+    codex_transport: Option<codex_runtime::RuntimeTransport>,
     codex_generation: u64,
 ) {
     let mut mapper_state = mapper::MapperState::new(cfg, detected, mouse_stick_active);
-    let mut codex_dispatcher =
-        codex_micro::Dispatcher::new(codex_micro::UnavailableTransport, codex_generation);
+    let transport: Box<dyn codex_micro::CodexTransport> = match codex_transport {
+        Some(transport) => Box::new(transport),
+        None => Box::new(codex_micro::UnavailableTransport),
+    };
+    let mut codex_dispatcher = codex_micro::Dispatcher::new(transport, codex_generation);
     // Semantic releases never enter the bounded/droppable generic action queue.
     // Dispatch them synchronously at the transport boundary before reading input.
     let reconnect_actions = codex_state
@@ -402,8 +440,10 @@ async fn run_input_loop(
                                 codex_micro::DispatchResult::Applied(id) => {
                                     log::info!("Codex Micro applied request {}", id.request_id)
                                 }
-                                codex_micro::DispatchResult::Rejected { action, error } => {
-                                    log::warn!("Codex Micro unavailable: {action:?}: {error:?}")
+                                codex_micro::DispatchResult::Rejected { error, .. } => {
+                                    log::warn!(
+                                        "Codex runtime rejected a controller request: {error:?}"
+                                    )
                                 }
                             }
                             codex_state
@@ -467,6 +507,7 @@ async fn run_input_loop(
 const PLAYER_LEDS: u8 = 0x04;
 
 /// Output loop: keep the static lightbar color, player LED, and mic-mute LED updated.
+#[allow(clippy::too_many_arguments)]
 async fn run_output_loop(
     handle: hid::HidHandle,
     ct: controller::ControllerType,
@@ -474,6 +515,7 @@ async fn run_output_loop(
     lightbar_color: config::ColorConfig,
     codex_state: Arc<Mutex<codex_micro::CodexMicro>>,
     codex_cfg: config::CodexMicroConfig,
+    runtime_view: Option<Arc<Mutex<codex_runtime::RuntimeView>>>,
     started: std::time::Instant,
 ) {
     let mut bt_seq = 0u8;
@@ -487,19 +529,50 @@ async fn run_output_loop(
 
     loop {
         ticker.tick().await;
-        let rgb = codex_micro::compose_rgb(
-            &codex_state.lock().expect("codex state poisoned"),
-            &codex_cfg,
-            [lightbar_color.r, lightbar_color.g, lightbar_color.b],
-            started.elapsed().as_millis() as u64,
-        );
+        let now_ms = started.elapsed().as_millis() as u64;
+        let (mut rgb, pending) = {
+            let state = codex_state.lock().expect("codex state poisoned");
+            (
+                codex_micro::compose_rgb(
+                    &state,
+                    &codex_cfg,
+                    [lightbar_color.r, lightbar_color.g, lightbar_color.b],
+                    now_ms,
+                ),
+                state.slots[state.selected]
+                    .thread
+                    .as_ref()
+                    .is_some_and(|t| t.status == codex_micro::ChatStatus::RequiresInput),
+            )
+        };
+        let (connected, voice, fast) = runtime_view
+            .as_ref()
+            .map(|view| {
+                let view = view.lock().expect("runtime view poisoned");
+                (view.connected, view.voice, view.fast)
+            })
+            .unwrap_or((true, codex_runtime::VoiceState::Idle, false));
+        if codex_cfg.enabled && !connected {
+            rgb = codex_micro::ChatStatus::Error.color();
+        }
+        if voice == codex_runtime::VoiceState::Capturing {
+            rgb = [180, 0, 255];
+        }
+        if voice == codex_runtime::VoiceState::Finalizing {
+            rgb = [0, 220, 220];
+        }
+        let pulse = (now_ms / 250).is_multiple_of(2);
         let out = OutputState {
             lightbar_r: rgb[0],
             lightbar_g: rgb[1],
             lightbar_b: rgb[2],
-            rumble_left: 0,
-            rumble_right: 0,
-            player_leds: PLAYER_LEDS,
+            rumble_left: if pending && pulse { 42 } else { 0 },
+            rumble_right: if voice == codex_runtime::VoiceState::Finalizing && pulse {
+                28
+            } else {
+                0
+            },
+            player_leds: if fast { 0x1f } else { PLAYER_LEDS },
             mute_led: mic::MIC_MUTED.load(Ordering::Relaxed) as u8,
         };
         let report = output::build_report(ct, conn, &out, &mut bt_seq);

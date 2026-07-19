@@ -23,8 +23,20 @@ pub struct Config {
 #[serde(default)]
 pub struct CodexMicroConfig {
     pub enabled: bool,
-    /// Explicitly enable the semantic prototype without a runtime transport.
+    /// Deprecated compatibility switch. It no longer enables a fake transport.
     pub demo_mode: bool,
+    /// Absolute executable, or `codex` to resolve it with PATH.
+    pub codex_executable: String,
+    /// Optional working directory for new threads and skills/list.
+    pub cwd: String,
+    pub request_timeout_ms: u64,
+    pub reconnect_min_ms: u64,
+    pub reconnect_max_ms: u64,
+    pub composer_limit: usize,
+    /// Absolute argv for a local speech-to-text adapter. No shell is used.
+    pub voice_argv: Vec<String>,
+    pub voice_timeout_ms: u64,
+    pub voice_output_limit: usize,
     pub brightness: u8,
     pub inactivity_seconds: u64,
     pub analog_dead_zone: u8,
@@ -35,6 +47,8 @@ pub struct CodexMicroConfig {
     pub custom_order: Vec<String>,
     pub commands: HashMap<String, String>,
     pub skills: HashMap<String, String>,
+    /// up/down/left/right values are prompt text submitted as a turn.
+    pub cardinal_actions: HashMap<String, String>,
 }
 
 impl Default for CodexMicroConfig {
@@ -42,6 +56,15 @@ impl Default for CodexMicroConfig {
         Self {
             enabled: false,
             demo_mode: false,
+            codex_executable: "codex".into(),
+            cwd: String::new(),
+            request_timeout_ms: 15_000,
+            reconnect_min_ms: 250,
+            reconnect_max_ms: 8_000,
+            composer_limit: 16_384,
+            voice_argv: Vec::new(),
+            voice_timeout_ms: 30_000,
+            voice_output_limit: 16_384,
             brightness: 70,
             inactivity_seconds: 180,
             analog_dead_zone: 48,
@@ -50,6 +73,7 @@ impl Default for CodexMicroConfig {
             custom_order: Vec::new(),
             commands: HashMap::new(),
             skills: HashMap::new(),
+            cardinal_actions: HashMap::new(),
         }
     }
 }
@@ -61,10 +85,28 @@ impl CodexMicroConfig {
         self.analog_hysteresis = self
             .analog_hysteresis
             .min(self.analog_dead_zone.saturating_sub(1));
+        self.request_timeout_ms = self.request_timeout_ms.clamp(100, 120_000);
+        self.reconnect_min_ms = self.reconnect_min_ms.clamp(50, 30_000);
+        self.reconnect_max_ms = self
+            .reconnect_max_ms
+            .max(self.reconnect_min_ms)
+            .min(120_000);
+        self.composer_limit = self.composer_limit.clamp(1, 1_048_576);
+        self.voice_timeout_ms = self.voice_timeout_ms.clamp(100, 300_000);
+        self.voice_output_limit = self.voice_output_limit.clamp(1, 1_048_576);
+        for prompt in self
+            .commands
+            .values_mut()
+            .chain(self.cardinal_actions.values_mut())
+        {
+            if prompt.chars().count() > self.composer_limit {
+                *prompt = prompt.chars().take(self.composer_limit).collect();
+            }
+        }
     }
 
-    pub fn prototype_active(&self) -> bool {
-        self.enabled && self.demo_mode
+    pub fn runtime_active(&self) -> bool {
+        self.enabled
     }
 }
 
@@ -364,6 +406,18 @@ mod tests {
         config.codex_micro.normalize();
         assert_eq!(config.codex_micro.analog_dead_zone, 1);
         assert_eq!(config.codex_micro.analog_hysteresis, 0);
+    }
+    #[test]
+    fn configured_prompt_bodies_are_bounded() {
+        let mut cfg = CodexMicroConfig {
+            composer_limit: 3,
+            ..Default::default()
+        };
+        cfg.commands.insert("x".into(), "abcdef".into());
+        cfg.cardinal_actions.insert("up".into(), "uvwxyz".into());
+        cfg.normalize();
+        assert_eq!(cfg.commands["x"], "abc");
+        assert_eq!(cfg.cardinal_actions["up"], "uvw");
     }
 
     #[test]

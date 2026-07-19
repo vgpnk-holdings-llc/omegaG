@@ -82,12 +82,14 @@ pub struct ChatSlot {
 pub enum SemanticAction {
     Activate,
     ToggleFast,
+    NewThread,
     Approve,
     Decline,
     ContinueInNewChat,
     PushToTalk { active: bool, latched: bool },
+    CancelVoice,
     Send,
-    Cardinal { direction: DPad },
+    CardinalPrompt(String),
     SetReasoning(u8),
     Command(String),
     Skill(String),
@@ -125,6 +127,11 @@ pub struct Mutation {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TransportError {
     Unavailable,
+    NotReady,
+    QueueFull,
+    Timeout,
+    Unsupported,
+    Protocol,
     UnassignedTarget,
     StaleGeneration,
     DuplicateMutation,
@@ -134,6 +141,17 @@ pub enum TransportError {
 
 pub trait CodexTransport: Send {
     fn mutate(&mut self, mutation: &Mutation) -> Result<(), TransportError>;
+    fn epoch(&self) -> u64 {
+        0
+    }
+}
+impl<T: CodexTransport + ?Sized> CodexTransport for Box<T> {
+    fn mutate(&mut self, mutation: &Mutation) -> Result<(), TransportError> {
+        (**self).mutate(mutation)
+    }
+    fn epoch(&self) -> u64 {
+        (**self).epoch()
+    }
 }
 
 /// Shipped until a documented, capability-pinned app-server client exists.
@@ -172,21 +190,28 @@ impl<T: CodexTransport> Dispatcher<T> {
 
     pub fn dispatch(&mut self, bound: BoundAction) -> DispatchResult {
         let action = bound.action.clone();
-        let Some(target) = bound.target.as_ref() else {
+        let targetless = matches!(action, SemanticAction::NewThread);
+        if bound.target.is_none() && !targetless {
             return DispatchResult::Rejected {
                 action,
                 error: TransportError::UnassignedTarget,
             };
-        };
+        }
+        let target = bound.target.as_ref();
+        let live_generation = self.transport.epoch();
+        if live_generation != 0 && live_generation != self.generation {
+            self.generation = live_generation;
+            self.gate = MutationGate::new(live_generation);
+        }
         self.next_request_id += 1;
         let identity = MutationIdentity {
             connection_generation: self.generation,
             request_id: self.next_request_id,
             method: method_for(&action).to_owned(),
-            thread_id: target.thread_id.clone(),
-            turn_id: target.turn_id.clone(),
-            item_id: target.item_id.clone(),
-            approval_id: target.approval_id.clone(),
+            thread_id: target.map_or_else(String::new, |t| t.thread_id.clone()),
+            turn_id: target.and_then(|t| t.turn_id.clone()),
+            item_id: target.and_then(|t| t.item_id.clone()),
+            approval_id: target.and_then(|t| t.approval_id.clone()),
         };
         let mutation = Mutation {
             identity: identity.clone(),
@@ -211,13 +236,15 @@ fn method_for(action: &SemanticAction) -> &'static str {
     match action {
         SemanticAction::Activate => "thread/open",
         SemanticAction::ToggleFast => "thread/fast/toggle",
+        SemanticAction::NewThread => "thread/start",
         SemanticAction::Approve => "turn/approval/accept",
         SemanticAction::Decline => "turn/approval/decline",
         SemanticAction::ContinueInNewChat => "thread/fork",
         SemanticAction::PushToTalk { active: true, .. } => "composer/ptt/start",
         SemanticAction::PushToTalk { active: false, .. } => "composer/ptt/stop",
+        SemanticAction::CancelVoice => "composer/ptt/cancel",
         SemanticAction::Send => "turn/start",
-        SemanticAction::Cardinal { .. } => "composer/cardinal",
+        SemanticAction::CardinalPrompt(_) => "turn/start",
         SemanticAction::SetReasoning(_) => "thread/reasoning/set",
         SemanticAction::Command(_) => "command/run",
         SemanticAction::Skill(_) => "skill/run",
@@ -248,15 +275,17 @@ impl MutationGate {
         if id.connection_generation != self.generation {
             return Err(TransportError::StaleGeneration);
         }
-        let Some(expected) = bound.target.as_ref() else {
+        let targetless = matches!(mutation.action, SemanticAction::NewThread);
+        if bound.target.is_none() && !targetless {
             return Err(TransportError::UnassignedTarget);
-        };
-        if id.thread_id != expected.thread_id
-            || id.turn_id != expected.turn_id
-            || id.item_id != expected.item_id
-            || id.approval_id != expected.approval_id
-            || id.method != method_for(&mutation.action)
-        {
+        }
+        let mismatch = bound.target.as_ref().is_some_and(|expected| {
+            id.thread_id != expected.thread_id
+                || id.turn_id != expected.turn_id
+                || id.item_id != expected.item_id
+                || id.approval_id != expected.approval_id
+        });
+        if mismatch || id.method != method_for(&mutation.action) {
             return Err(TransportError::ContextMismatch);
         }
         if !self.accepted.insert(id.clone()) {
@@ -285,10 +314,14 @@ pub enum CodexEventKind {
         custom_order: Vec<String>,
     },
     Upsert(ThreadRecord),
-    Status {
-        context: ThreadContext,
+    SelectUpsert(ThreadRecord),
+    StatusById {
+        thread_id: String,
         status: ChatStatus,
         updated_ms: u64,
+    },
+    DisarmApproval {
+        thread_id: String,
     },
     Remove {
         thread_id: String,
@@ -385,12 +418,7 @@ impl Default for CodexMicro {
 
 impl CodexMicro {
     pub fn begin_generation(&mut self, generation: u64) -> Result<(), TransportError> {
-        let expected = if self.generation_started {
-            self.event_generation.saturating_add(1)
-        } else {
-            1
-        };
-        if generation != expected {
+        if generation == 0 || (self.generation_started && generation <= self.event_generation) {
             return Err(TransportError::StaleGeneration);
         }
         self.event_generation = generation;
@@ -458,23 +486,49 @@ impl CodexMicro {
                     self.threads.push(record);
                 }
             }
-            CodexEventKind::Status {
-                context,
+            CodexEventKind::SelectUpsert(record) => {
+                let id = record.context.thread_id.clone();
+                if let Some(old) = self.threads.iter_mut().find(|t| t.context.thread_id == id) {
+                    *old = record;
+                } else {
+                    self.threads.push(record);
+                }
+                self.arrange();
+                if let Some(index) = self
+                    .slots
+                    .iter()
+                    .position(|s| s.thread.as_ref().is_some_and(|t| t.context.thread_id == id))
+                {
+                    self.selected = index;
+                }
+            }
+            CodexEventKind::StatusById {
+                thread_id,
                 status,
                 updated_ms,
             } => {
                 let Some(old) = self
                     .threads
                     .iter_mut()
-                    .find(|t| t.context.thread_id == context.thread_id)
+                    .find(|t| t.context.thread_id == thread_id)
                 else {
                     return Err(TransportError::ContextMismatch);
                 };
-                if old.context != context {
-                    return Err(TransportError::ContextMismatch);
-                }
                 old.status = status;
                 old.updated_ms = updated_ms;
+            }
+            CodexEventKind::DisarmApproval { thread_id } => {
+                if let Some(old) = self
+                    .threads
+                    .iter_mut()
+                    .find(|t| t.context.thread_id == thread_id)
+                {
+                    old.context.approval_id = None;
+                    old.context.item_id = None;
+                    if old.status == ChatStatus::RequiresInput {
+                        old.status = ChatStatus::Thinking;
+                    }
+                }
             }
             CodexEventKind::Remove { thread_id } => {
                 self.threads.retain(|t| t.context.thread_id != thread_id)
@@ -601,10 +655,7 @@ impl CodexMicro {
     pub fn reconnect(&mut self) -> Vec<BoundAction> {
         let stop = (self.ptt_pressed || self.ptt_latched)
             .then_some(BoundAction {
-                action: SemanticAction::PushToTalk {
-                    active: false,
-                    latched: false,
-                },
+                action: SemanticAction::CancelVoice,
                 target: self.ptt_context.clone(),
             })
             .into_iter()
@@ -631,7 +682,7 @@ impl CodexMicro {
         now_ms: u64,
         cfg: &CodexMicroConfig,
     ) -> (Vec<BoundAction>, bool) {
-        if !cfg.prototype_active() {
+        if !cfg.runtime_active() {
             self.prev = input.buttons;
             return (Vec::new(), false);
         }
@@ -688,10 +739,18 @@ impl CodexMicro {
             {
                 out.push(a);
             }
-            if pressed(b.cross, self.prev.cross) {
+            if pressed(b.cross, self.prev.cross)
+                && self
+                    .selected_context()
+                    .is_some_and(|c| c.approval_id.is_some())
+            {
                 out.push(self.bind(SemanticAction::Approve));
             }
-            if pressed(b.circle, self.prev.circle) {
+            if pressed(b.circle, self.prev.circle)
+                && self
+                    .selected_context()
+                    .is_some_and(|c| c.approval_id.is_some())
+            {
                 out.push(self.bind(SemanticAction::Decline));
             }
             if pressed(b.triangle, self.prev.triangle) {
@@ -702,6 +761,12 @@ impl CodexMicro {
             }
             if pressed(b.options, self.prev.options) {
                 out.push(self.bind(SemanticAction::ContinueInNewChat));
+            }
+            if pressed(b.share, self.prev.share) {
+                out.push(BoundAction {
+                    action: SemanticAction::NewThread,
+                    target: None,
+                });
             }
             if pressed(b.l2, self.prev.l2) {
                 out.extend(self.ptt_press(now_ms));
@@ -741,7 +806,16 @@ impl CodexMicro {
                     cfg.analog_hysteresis,
                 )
             {
-                out.push(self.bind(SemanticAction::Cardinal { direction }));
+                let name = match direction {
+                    DPad::Up => "up",
+                    DPad::Down => "down",
+                    DPad::Left => "left",
+                    DPad::Right => "right",
+                    _ => "",
+                };
+                if let Some(prompt) = cfg.cardinal_actions.get(name) {
+                    out.push(self.bind(SemanticAction::CardinalPrompt(prompt.clone())));
+                }
             }
         }
         self.prev = b;
@@ -783,7 +857,7 @@ pub fn compose_rgb(
     legacy: [u8; 3],
     now_ms: u64,
 ) -> [u8; 3] {
-    if cfg.prototype_active() {
+    if cfg.runtime_active() {
         state.rgb(now_ms, cfg)
     } else {
         legacy
@@ -800,6 +874,20 @@ mod tests {
         fn mutate(&mut self, mutation: &Mutation) -> Result<(), TransportError> {
             self.0.push(mutation.clone());
             Ok(())
+        }
+    }
+
+    struct EpochTransport {
+        epoch: std::sync::Arc<std::sync::atomic::AtomicU64>,
+        mutations: Vec<Mutation>,
+    }
+    impl CodexTransport for EpochTransport {
+        fn mutate(&mut self, mutation: &Mutation) -> Result<(), TransportError> {
+            self.mutations.push(mutation.clone());
+            Ok(())
+        }
+        fn epoch(&self) -> u64 {
+            self.epoch.load(std::sync::atomic::Ordering::Acquire)
         }
     }
 
@@ -941,13 +1029,7 @@ mod tests {
         assert!(s.update_input(&i, 510, &cfg).0.is_empty());
         assert_eq!(s.reconnect(), Vec::<SemanticAction>::new());
         s.ptt_pressed = true;
-        assert_eq!(
-            s.reconnect(),
-            vec![SemanticAction::PushToTalk {
-                active: false,
-                latched: false
-            }]
-        );
+        assert_eq!(s.reconnect(), vec![SemanticAction::CancelVoice]);
     }
 
     #[test]
@@ -1043,7 +1125,7 @@ mod tests {
         assert_eq!(s.slots[0].thread.as_ref().unwrap().context.thread_id, "b");
     }
     #[test]
-    fn status_requires_exact_context_and_wakes() {
+    fn status_by_id_ignores_stale_subcontext_and_wakes() {
         let mut s = CodexMicro::default();
         s.begin_generation(1).unwrap();
         s.reduce(
@@ -1055,35 +1137,12 @@ mod tests {
             1,
         )
         .unwrap();
-        for field in 0..3 {
-            let mut wrong = context("a");
-            match field {
-                0 => wrong.turn_id = Some("wrong".into()),
-                1 => wrong.item_id = Some("wrong".into()),
-                _ => wrong.approval_id = Some("wrong".into()),
-            }
-            assert_eq!(
-                s.reduce(
-                    CodexEvent {
-                        connection_generation: 1,
-                        sequence: 2,
-                        kind: CodexEventKind::Status {
-                            context: wrong,
-                            status: ChatStatus::Error,
-                            updated_ms: 2
-                        }
-                    },
-                    200
-                ),
-                Err(TransportError::ContextMismatch)
-            );
-        }
         s.reduce(
             CodexEvent {
                 connection_generation: 1,
                 sequence: 2,
-                kind: CodexEventKind::Status {
-                    context: context("a"),
+                kind: CodexEventKind::StatusById {
+                    thread_id: "a".into(),
                     status: ChatStatus::CompleteUnread,
                     updated_ms: 2,
                 },
@@ -1161,6 +1220,47 @@ mod tests {
         }
         assert_eq!(bounded.retained(), MAX_REPLAY_IDS);
     }
+    #[test]
+    fn new_thread_dispatches_without_assigned_target() {
+        let mut dispatcher = Dispatcher::new(RecordingTransport::default(), 7);
+        let result = dispatcher.dispatch(BoundAction {
+            action: SemanticAction::NewThread,
+            target: None,
+        });
+        assert!(matches!(result, DispatchResult::Applied(ref id) if id.thread_id.is_empty()));
+        assert_eq!(
+            dispatcher.into_transport().0[0].action,
+            SemanticAction::NewThread
+        );
+    }
+
+    #[test]
+    fn dispatcher_refreshes_server_epoch_after_construction() {
+        let epoch = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1));
+        let transport = EpochTransport {
+            epoch: std::sync::Arc::clone(&epoch),
+            mutations: Vec::new(),
+        };
+        let mut dispatcher = Dispatcher::new(transport, 1);
+        epoch.store(2, std::sync::atomic::Ordering::Release);
+        let result = dispatcher.dispatch(BoundAction {
+            action: SemanticAction::NewThread,
+            target: None,
+        });
+        assert!(matches!(
+            result,
+            DispatchResult::Applied(MutationIdentity {
+                connection_generation: 2,
+                ..
+            })
+        ));
+        assert_eq!(
+            dispatcher.into_transport().mutations[0]
+                .identity
+                .connection_generation,
+            2
+        );
+    }
 
     #[test]
     fn analog_requires_neutral_and_ties_are_vertical() {
@@ -1211,7 +1311,7 @@ mod tests {
         );
     }
     #[test]
-    fn enabled_without_demo_mode_preserves_legacy_controls() {
+    fn enabled_without_demo_mode_activates_runtime_controls() {
         let cfg = CodexMicroConfig {
             enabled: true,
             demo_mode: false,
@@ -1222,9 +1322,9 @@ mod tests {
         input.buttons.ps = true;
         input.buttons.cross = true;
         let (actions, consumed) = state.update_input(&input, 1, &cfg);
-        assert!(actions.is_empty());
-        assert!(!consumed);
-        assert_eq!(compose_rgb(&state, &cfg, [9, 8, 7], 1), [9, 8, 7]);
+        assert!(actions.is_empty()); // approval remains disabled without an armed request
+        assert!(consumed);
+        assert_ne!(compose_rgb(&state, &cfg, [9, 8, 7], 1), [9, 8, 7]);
     }
 
     #[test]
@@ -1248,18 +1348,14 @@ mod tests {
             )
             .unwrap();
         assert_eq!(state.threads.len(), MAX_THREADS);
-        assert_eq!(
-            state.begin_generation(3),
-            Err(TransportError::StaleGeneration)
-        );
-        state.begin_generation(2).unwrap();
+        state.begin_generation(3).unwrap();
         assert!(state.threads.is_empty());
         assert!(state.slots.iter().all(|slot| slot.thread.is_none()));
         assert!(state.selected_context().is_none());
         state
             .reduce(
                 CodexEvent {
-                    connection_generation: 2,
+                    connection_generation: 3,
                     sequence: 1,
                     kind: CodexEventKind::Remove {
                         thread_id: "t99".into(),
@@ -1350,8 +1446,8 @@ mod tests {
             CodexEvent {
                 connection_generation: 1,
                 sequence: 2,
-                kind: CodexEventKind::Status {
-                    context: context("selected"),
+                kind: CodexEventKind::StatusById {
+                    thread_id: "selected".into(),
                     status: ChatStatus::Thinking,
                     updated_ms: 2,
                 },

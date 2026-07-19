@@ -269,6 +269,7 @@ dependencies = [
  "env_logger",
  "hidapi",
  "image",
+ "libc",
  "log",
  "serde",
  "serde_json",
