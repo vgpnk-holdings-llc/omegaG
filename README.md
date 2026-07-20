@@ -33,7 +33,6 @@ for compatibility. The daemon runs in the Windows tray and lets your controller:
 - **Move the mouse** — touchpad swipe or left stick moves the cursor, touchpad press clicks
 - **Scroll** — right stick, vertical + horizontal
 - **Toggle the mic** — DualSense mute button toggles the system microphone
-- **Pair with [Wispr](https://ref.wisprflow.ai/vgpnk)** — voice handles text, controller handles everything else
 
 No hooks, no polling, no agent-state tracking, no profiles. It is a shortcut mapper.
 
