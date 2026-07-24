@@ -2,18 +2,12 @@
 name = "ds4cc"
 version = "3.1.0"
 edition = "2024"
-description = "Windows daemon bridging DualSense/DS4 controllers with AI coding agents"
+description = "Daemon bridging DualSense/DS4 controllers with AI coding agents"
+
+# Standalone package: do not inherit any parent workspace manifest.
+[workspace]
 
 [dependencies]
-hidapi = { version = "2.6", features = ["windows-native"] }
-windows-sys = { version = "0.59", features = ["Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging", "Win32_System_Console"] }
-windows = { version = "0.58", features = [
-    "Win32_System_Com",
-    "Win32_Media_Audio",
-    "Win32_Media_Audio_Endpoints",
-    "Win32_Foundation",
-] }
-tray-icon = "0.21"
 tokio = { version = "1", features = ["rt-multi-thread", "time", "macros", "sync"] }
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
@@ -21,5 +15,17 @@ serde_json = "1"
 log = "0.4"
 libc = "0.2"
 env_logger = "0.11"
-image = { version = "0.25", default-features = false, features = ["png"] }
+image = { version = "0.25", default-features = false, features = ["png", "ico"] }
 ureq = "3"
+
+[target.'cfg(windows)'.dependencies]
+hidapi = { version = "2.6", features = ["windows-native"] }
+windows-sys = { version = "0.59", features = ["Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging", "Win32_System_Console"] }
+windows = { version = "0.58", features = ["Win32_System_Com", "Win32_Media_Audio", "Win32_Media_Audio_Endpoints", "Win32_Foundation"] }
+tray-icon = "0.21"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+hidapi = { version = "2.6", features = ["linux-static-hidraw"] }
+evdev = "0.13"
+ksni = { version = "0.3", features = ["blocking"] }
+dirs = "6"

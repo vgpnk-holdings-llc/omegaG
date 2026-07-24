@@ -1,3 +1,62 @@
+/// System tray icon — platform dispatch.
+///
+/// Both OSes share the same entry point: [`spawn`] creates a channel and
+/// launches a dedicated `tray` std thread running [`run`], which dispatches
+/// to the platform implementation:
+///
+///   * Windows (`win` module): tray-icon crate + Win32 message pump.
+///   * Linux (`tray_linux.rs`): ksni StatusNotifierItem (blocking API).
+///
+/// The async runtime sends [`TrayCmd`] messages to update menu state.
+use std::sync::{Arc, atomic::AtomicBool, mpsc};
+
+/// Commands from the async runtime to the tray thread.
+pub enum TrayCmd {
+    SetStickMode(bool),
+}
+
+/// Spawn the tray icon on a background thread. Returns a channel sender.
+///
+/// This is the single entry point `main()` uses on every OS.
+pub fn spawn(mouse_stick_active: Arc<AtomicBool>) -> mpsc::Sender<TrayCmd> {
+    let (tx, rx) = mpsc::channel();
+    std::thread::Builder::new()
+        .name("tray".into())
+        .spawn(move || run(rx, mouse_stick_active))
+        .expect("spawn tray thread");
+    tx
+}
+
+/// Tray thread body — the entry both OSes share; dispatches per platform.
+fn run(rx: mpsc::Receiver<TrayCmd>, mouse_stick_active: Arc<AtomicBool>) {
+    #[cfg(windows)]
+    win::run(rx, mouse_stick_active);
+    #[cfg(target_os = "linux")]
+    linux::run(rx, mouse_stick_active);
+}
+
+#[cfg(target_os = "linux")]
+#[path = "tray_linux.rs"]
+mod linux;
+
+/// Desktop notification helper used by the Linux self-update flow.
+#[cfg(target_os = "linux")]
+pub(crate) use linux::notify;
+
+/// Linux: true when a D-Bus session bus looks reachable.
+///
+/// `main` uses this to auto-skip the tray (sender = `None`) on headless
+/// sessions, alongside `--no-tray`. The tray thread also fails gracefully
+/// on its own if the bus disappears after this check.
+// Wired up by main.rs (C2); keep the API surface even before that lands.
+#[cfg(target_os = "linux")]
+#[allow(dead_code)]
+pub fn session_bus_available() -> bool {
+    linux::dbus_session_available()
+}
+
+// ── Windows implementation (tray-icon crate + Win32 message pump) ─────
+//
 /// System tray icon: DualSense PNG silhouette, luminance-tinted neon green.
 ///
 /// Right-click context menu:
@@ -8,451 +67,403 @@
 ///   Exit
 ///
 /// Runs on a dedicated OS thread with a Win32 message pump.
-/// The async runtime sends [`TrayCmd`] messages to update menu state.
-use std::path::PathBuf;
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
-    mpsc,
-};
-
-use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
-use tray_icon::{Icon, TrayIconBuilder};
-
 #[cfg(windows)]
-use windows_sys::Win32::System::Console::GetConsoleWindow;
-#[cfg(windows)]
-use windows_sys::Win32::UI::WindowsAndMessaging::{
-    DeleteMenu, DispatchMessageW, GetSystemMenu, MF_BYCOMMAND, MSG, PM_REMOVE, PeekMessageW,
-    SC_CLOSE, SW_HIDE, SW_SHOW, ShowWindow, TranslateMessage,
-};
-
-const ICON_SIZE: u32 = 32;
-const APP_NAME: &str = "DS4CC";
-const REG_RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
-
-/// Commands from the async runtime to the tray thread.
-pub enum TrayCmd {
-    SetStickMode(bool),
-}
-
-/// Spawn the tray icon on a background thread. Returns a channel sender.
-pub fn spawn(mouse_stick_active: Arc<AtomicBool>) -> mpsc::Sender<TrayCmd> {
-    let (tx, rx) = mpsc::channel();
-    std::thread::Builder::new()
-        .name("tray".into())
-        .spawn(move || run(rx, mouse_stick_active))
-        .expect("spawn tray thread");
-    tx
-}
-
-fn run(rx: mpsc::Receiver<TrayCmd>, mouse_stick_active: Arc<AtomicBool>) {
-    let auto_start_enabled = is_auto_start_enabled();
-    let stick_initially = mouse_stick_active.load(Ordering::Relaxed);
-    let (r, g, b) = ICON_COLOR;
-    let icon = make_icon(r, g, b);
-
-    // Build context menu
-    let wispr_item = MenuItem::new("Open Wispr Flow", true, None);
-    let restart_item = MenuItem::new("Restart", true, None);
-    let update_item = MenuItem::new("Check for Update", true, None);
-    let startup_item = CheckMenuItem::new("Enable auto start-up", true, auto_start_enabled, None);
-    let stick_item = CheckMenuItem::new("Mouse: Left Stick", true, stick_initially, None);
-    let log_item = CheckMenuItem::new("Show Log Window", true, false, None);
-    let exit_item = MenuItem::new("Exit", true, None);
-
-    // Capture IDs for event matching
-    let wispr_id = wispr_item.id().clone();
-    let restart_id = restart_item.id().clone();
-    let update_id = update_item.id().clone();
-    let startup_id = startup_item.id().clone();
-    let stick_id = stick_item.id().clone();
-    let log_id = log_item.id().clone();
-    let exit_id = exit_item.id().clone();
-
-    let menu = Menu::new();
-    menu.append(&wispr_item).expect("menu append");
-    menu.append(&restart_item).expect("menu append");
-    menu.append(&update_item).expect("menu append");
-    menu.append(&startup_item).expect("menu append");
-    menu.append(&stick_item).expect("menu append");
-    menu.append(&log_item).expect("menu append");
-    menu.append(&PredefinedMenuItem::separator())
-        .expect("menu append");
-    menu.append(&exit_item).expect("menu append");
-
-    let tray = match TrayIconBuilder::new()
-        .with_tooltip("DS4CC")
-        .with_icon(icon)
-        .with_menu(Box::new(menu))
-        .build()
-    {
-        Ok(t) => t,
-        Err(e) => {
-            log::error!("Failed to create tray icon: {e}");
-            return;
-        }
+mod win {
+    use super::TrayCmd;
+    use std::path::PathBuf;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+        mpsc,
     };
-    // Keep the tray icon alive for the lifetime of this thread.
-    let _tray = tray;
 
-    log::info!("Tray icon created (auto-start: {auto_start_enabled})");
+    use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
+    use tray_icon::{Icon, TrayIconBuilder};
 
-    loop {
-        // Pump Win32 messages so the tray icon stays responsive.
-        pump_win32_messages();
-
-        // Handle menu events
-        while let Ok(event) = MenuEvent::receiver().try_recv() {
-            if event.id == exit_id {
-                std::process::exit(0);
-            } else if event.id == restart_id {
-                restart_app();
-            } else if event.id == wispr_id {
-                open_wispr_flow();
-            } else if event.id == update_id {
-                std::thread::spawn(crate::update::check_for_update);
-            } else if event.id == startup_id {
-                // CheckMenuItem auto-toggles on click; is_checked() reflects new state
-                set_auto_start(startup_item.is_checked());
-            } else if event.id == stick_id {
-                let stick = stick_item.is_checked();
-                mouse_stick_active.store(stick, Ordering::Relaxed);
-                let mode = if stick { "left stick" } else { "touchpad" };
-                log::info!("Mouse cursor mode: {mode}");
-            } else if event.id == log_id {
-                let show = log_item.is_checked();
-                toggle_log_window(show);
-                log::info!("Log window: {}", if show { "shown" } else { "hidden" });
-            }
-        }
-
-        match rx.try_recv() {
-            Ok(TrayCmd::SetStickMode(stick)) => {
-                stick_item.set_checked(stick);
-                mouse_stick_active.store(stick, Ordering::Relaxed);
-                let mode = if stick { "left stick" } else { "touchpad" };
-                log::info!("Mouse cursor mode auto-set: {mode}");
-            }
-            Err(mpsc::TryRecvError::Disconnected) => break,
-            Err(mpsc::TryRecvError::Empty) => {}
-        }
-
-        std::thread::sleep(std::time::Duration::from_millis(50));
-    }
-}
-
-// ── Menu actions ──────────────────────────────────────────────────────
-
-fn open_wispr_flow() {
-    match find_wispr_flow() {
-        Some(path) => {
-            log::info!("Launching Wispr Flow: {}", path.display());
-            if let Err(e) = std::process::Command::new(&path).spawn() {
-                log::error!("Failed to launch Wispr Flow: {e}");
-            }
-        }
-        None => {
-            log::warn!("Wispr Flow not found — prompting user");
-            prompt_download_wispr_flow();
-        }
-    }
-}
-
-/// Search for the Wispr Flow executable.
-///
-/// Resolution order:
-///   1. HKLM App Paths registry key (reliable if installer registered it)
-///   2. Common install locations under %LOCALAPPDATA%, %PROGRAMFILES%, %PROGRAMFILES(X86)%
-fn find_wispr_flow() -> Option<PathBuf> {
-    // 1. Registry App Paths
-    if let Some(path) = wispr_flow_from_app_paths() {
-        return Some(path);
-    }
-
-    // 2. Known filesystem locations
-    let mut candidates: Vec<PathBuf> = Vec::new();
-
-    if let Ok(local) = std::env::var("LOCALAPPDATA") {
-        candidates.push(
-            PathBuf::from(&local)
-                .join("WisprFlow")
-                .join("Wispr Flow.exe"),
-        );
-        candidates.push(
-            PathBuf::from(&local)
-                .join("Programs")
-                .join("Wispr Flow")
-                .join("Wispr Flow.exe"),
-        );
-        candidates.push(
-            PathBuf::from(&local)
-                .join("Programs")
-                .join("wispr-flow")
-                .join("Wispr Flow.exe"),
-        );
-        candidates.push(
-            PathBuf::from(&local)
-                .join("Programs")
-                .join("WisprFlow")
-                .join("WisprFlow.exe"),
-        );
-    }
-    if let Ok(pf) = std::env::var("PROGRAMFILES") {
-        candidates.push(PathBuf::from(&pf).join("Wispr Flow").join("Wispr Flow.exe"));
-        candidates.push(PathBuf::from(&pf).join("WisprFlow").join("Wispr Flow.exe"));
-    }
-    if let Ok(pf86) = std::env::var("PROGRAMFILES(X86)") {
-        candidates.push(
-            PathBuf::from(&pf86)
-                .join("Wispr Flow")
-                .join("Wispr Flow.exe"),
-        );
-    }
-
-    candidates.into_iter().find(|p| p.exists())
-}
-
-/// Query HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\Wispr Flow.exe
-fn wispr_flow_from_app_paths() -> Option<PathBuf> {
-    let output = std::process::Command::new("reg")
-        .args([
-            "query",
-            r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\Wispr Flow.exe",
-            "/ve",
-        ])
-        .output()
-        .ok()?;
-
-    if !output.status.success() {
-        return None;
-    }
-
-    // Output format:  "    (Default)    REG_SZ    C:\path\to\Wispr Flow.exe"
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    for line in stdout.lines() {
-        if line.contains("REG_SZ")
-            && let Some(value) = line.split("REG_SZ").nth(1)
-        {
-            let path = PathBuf::from(value.trim());
-            if path.exists() {
-                return Some(path);
-            }
-        }
-    }
-
-    None
-}
-
-/// Show a Yes/No dialog when Wispr Flow can't be found.
-/// "Yes" opens the download page; "No" closes the dialog.
-#[cfg(windows)]
-fn prompt_download_wispr_flow() {
+    use windows_sys::Win32::System::Console::GetConsoleWindow;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        IDYES, MB_ICONWARNING, MB_YESNO, MessageBoxW,
+        DeleteMenu, DispatchMessageW, GetSystemMenu, MF_BYCOMMAND, MSG, PM_REMOVE, PeekMessageW,
+        SC_CLOSE, SW_HIDE, SW_SHOW, ShowWindow, TranslateMessage,
     };
 
-    let text: Vec<u16> = "Wispr Flow couldn't be located. Speech to Text won't work without it.\n\nWant to download?"
-        .encode_utf16()
-        .chain(std::iter::once(0))
-        .collect();
-    let caption: Vec<u16> = "Wispr Flow Not Found"
-        .encode_utf16()
-        .chain(std::iter::once(0))
-        .collect();
+    const ICON_SIZE: u32 = 32;
+    const APP_NAME: &str = "DS4CC";
+    const REG_RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
 
-    let result = unsafe {
-        MessageBoxW(
-            std::ptr::null_mut(),
-            text.as_ptr(),
-            caption.as_ptr(),
-            MB_YESNO | MB_ICONWARNING,
-        )
-    };
+    pub(super) fn run(rx: mpsc::Receiver<TrayCmd>, mouse_stick_active: Arc<AtomicBool>) {
+        let auto_start_enabled = is_auto_start_enabled();
+        let stick_initially = mouse_stick_active.load(Ordering::Relaxed);
+        let (r, g, b) = ICON_COLOR;
+        let icon = make_icon(r, g, b);
 
-    if result == IDYES {
-        let _ = std::process::Command::new("explorer.exe")
-            .arg("https://ref.wisprflow.ai/vgpnk")
-            .spawn();
-    }
-}
+        // Build context menu
+        let wispr_item = MenuItem::new("Open Wispr Flow", true, None);
+        let restart_item = MenuItem::new("Restart", true, None);
+        let update_item = MenuItem::new("Check for Update", true, None);
+        let startup_item =
+            CheckMenuItem::new("Enable auto start-up", true, auto_start_enabled, None);
+        let stick_item = CheckMenuItem::new("Mouse: Left Stick", true, stick_initially, None);
+        let log_item = CheckMenuItem::new("Show Log Window", true, false, None);
+        let exit_item = MenuItem::new("Exit", true, None);
 
-#[cfg(not(windows))]
-fn prompt_download_wispr_flow() {
-    log::warn!("Wispr Flow not found (https://wisprflow.ai)");
-}
+        // Capture IDs for event matching
+        let wispr_id = wispr_item.id().clone();
+        let restart_id = restart_item.id().clone();
+        let update_id = update_item.id().clone();
+        let startup_id = startup_item.id().clone();
+        let stick_id = stick_item.id().clone();
+        let log_id = log_item.id().clone();
+        let exit_id = exit_item.id().clone();
 
-fn restart_app() {
-    // If we cannot resolve our own path, log and return — do NOT fall through to
-    // exit(0), which would terminate the app permanently without restarting.
-    let exe = match std::env::current_exe() {
-        Ok(exe) => exe,
-        Err(e) => {
-            log::error!("Cannot determine exe path to restart: {e}");
-            return;
-        }
-    };
-    if let Err(e) = std::process::Command::new(&exe).spawn() {
-        log::error!("Failed to restart: {e}");
-        return;
-    }
-    // Only exit once the replacement process has been spawned successfully.
-    std::process::exit(0);
-}
+        let menu = Menu::new();
+        menu.append(&wispr_item).expect("menu append");
+        menu.append(&restart_item).expect("menu append");
+        menu.append(&update_item).expect("menu append");
+        menu.append(&startup_item).expect("menu append");
+        menu.append(&stick_item).expect("menu append");
+        menu.append(&log_item).expect("menu append");
+        menu.append(&PredefinedMenuItem::separator())
+            .expect("menu append");
+        menu.append(&exit_item).expect("menu append");
 
-// ── Auto-startup (HKCU Run registry key) ─────────────────────────────
-
-fn is_auto_start_enabled() -> bool {
-    std::process::Command::new("reg")
-        .args(["query", REG_RUN_KEY, "/v", APP_NAME])
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
-}
-
-fn set_auto_start(enabled: bool) {
-    if enabled {
-        let Ok(exe) = std::env::current_exe() else {
-            log::error!("Cannot determine exe path for auto-start");
-            return;
+        let tray = match TrayIconBuilder::new()
+            .with_tooltip("DS4CC")
+            .with_icon(icon)
+            .with_menu(Box::new(menu))
+            .build()
+        {
+            Ok(t) => t,
+            Err(e) => {
+                log::error!("Failed to create tray icon: {e}");
+                return;
+            }
         };
-        // Quote path to handle spaces
-        let value = format!("\"{}\"", exe.to_string_lossy());
-        let status = std::process::Command::new("reg")
-            .args([
-                "add",
-                REG_RUN_KEY,
-                "/v",
-                APP_NAME,
-                "/t",
-                "REG_SZ",
-                "/d",
-                &value,
-                "/f",
-            ])
-            .status();
-        match status {
-            Ok(s) if s.success() => log::info!("Auto-start enabled: {value}"),
-            Ok(s) => log::warn!("Auto-start reg add failed (exit {s})"),
-            Err(e) => log::warn!("Auto-start reg add error: {e}"),
-        }
-    } else {
-        let status = std::process::Command::new("reg")
-            .args(["delete", REG_RUN_KEY, "/v", APP_NAME, "/f"])
-            .status();
-        match status {
-            Ok(s) if s.success() => log::info!("Auto-start disabled"),
-            Ok(s) => log::warn!("Auto-start reg delete failed (exit {s})"),
-            Err(e) => log::warn!("Auto-start reg delete error: {e}"),
-        }
-    }
-}
+        // Keep the tray icon alive for the lifetime of this thread.
+        let _tray = tray;
 
-// ── Platform helpers ──────────────────────────────────────────────────
+        log::info!("Tray icon created (auto-start: {auto_start_enabled})");
 
-/// Pump the Win32 message queue so the tray icon responds to clicks.
-/// On non-Windows the tray crate's own event system handles delivery.
-#[cfg(windows)]
-fn pump_win32_messages() {
-    unsafe {
-        let mut msg: MSG = std::mem::zeroed();
-        while PeekMessageW(&mut msg, std::ptr::null_mut(), 0, 0, PM_REMOVE) != 0 {
-            TranslateMessage(&msg);
-            DispatchMessageW(&msg);
-        }
-    }
-}
+        loop {
+            // Pump Win32 messages so the tray icon stays responsive.
+            pump_win32_messages();
 
-#[cfg(not(windows))]
-fn pump_win32_messages() {}
-
-/// Show or hide the console log window.
-/// On Windows, controls the Win32 console window via ShowWindow.
-/// On non-Windows this is a no-op (terminal output is always visible).
-#[cfg(windows)]
-fn toggle_log_window(show: bool) {
-    unsafe {
-        let console = GetConsoleWindow();
-        if !console.is_null() {
-            if show {
-                ShowWindow(console, SW_SHOW);
-                // Disable the X button so the user can't accidentally close the process
-                let hmenu = GetSystemMenu(console, 0);
-                if !hmenu.is_null() {
-                    DeleteMenu(hmenu, SC_CLOSE, MF_BYCOMMAND);
+            // Handle menu events
+            while let Ok(event) = MenuEvent::receiver().try_recv() {
+                if event.id == exit_id {
+                    std::process::exit(0);
+                } else if event.id == restart_id {
+                    restart_app();
+                } else if event.id == wispr_id {
+                    open_wispr_flow();
+                } else if event.id == update_id {
+                    std::thread::spawn(crate::update::check_for_update);
+                } else if event.id == startup_id {
+                    // CheckMenuItem auto-toggles on click; is_checked() reflects new state
+                    set_auto_start(startup_item.is_checked());
+                } else if event.id == stick_id {
+                    let stick = stick_item.is_checked();
+                    mouse_stick_active.store(stick, Ordering::Relaxed);
+                    let mode = if stick { "left stick" } else { "touchpad" };
+                    log::info!("Mouse cursor mode: {mode}");
+                } else if event.id == log_id {
+                    let show = log_item.is_checked();
+                    toggle_log_window(show);
+                    log::info!("Log window: {}", if show { "shown" } else { "hidden" });
                 }
-            } else {
-                ShowWindow(console, SW_HIDE);
+            }
+
+            match rx.try_recv() {
+                Ok(TrayCmd::SetStickMode(stick)) => {
+                    stick_item.set_checked(stick);
+                    mouse_stick_active.store(stick, Ordering::Relaxed);
+                    let mode = if stick { "left stick" } else { "touchpad" };
+                    log::info!("Mouse cursor mode auto-set: {mode}");
+                }
+                Err(mpsc::TryRecvError::Disconnected) => break,
+                Err(mpsc::TryRecvError::Empty) => {}
+            }
+
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+    }
+
+    // ── Menu actions ──────────────────────────────────────────────────────
+
+    fn open_wispr_flow() {
+        match find_wispr_flow() {
+            Some(path) => {
+                log::info!("Launching Wispr Flow: {}", path.display());
+                if let Err(e) = std::process::Command::new(&path).spawn() {
+                    log::error!("Failed to launch Wispr Flow: {e}");
+                }
+            }
+            None => {
+                log::warn!("Wispr Flow not found — prompting user");
+                prompt_download_wispr_flow();
             }
         }
     }
-}
 
-#[cfg(not(windows))]
-fn toggle_log_window(_show: bool) {}
+    /// Search for the Wispr Flow executable.
+    ///
+    /// Resolution order:
+    ///   1. HKLM App Paths registry key (reliable if installer registered it)
+    ///   2. Common install locations under %LOCALAPPDATA%, %PROGRAMFILES%, %PROGRAMFILES(X86)%
+    fn find_wispr_flow() -> Option<PathBuf> {
+        // 1. Registry App Paths
+        if let Some(path) = wispr_flow_from_app_paths() {
+            return Some(path);
+        }
 
-// ── Embedded controller PNG ────────────────────────────────────────────
+        // 2. Known filesystem locations
+        let mut candidates: Vec<PathBuf> = Vec::new();
 
-/// White DualSense silhouette on near-black background.
-/// Same source image used for icon.ico (exe / installer icon).
-const ICON_PNG: &[u8] = include_bytes!("../imgs/ChatGPT Image Feb 23, 2026, 05_30_47 AM.png");
+        if let Ok(local) = std::env::var("LOCALAPPDATA") {
+            candidates.push(
+                PathBuf::from(&local)
+                    .join("WisprFlow")
+                    .join("Wispr Flow.exe"),
+            );
+            candidates.push(
+                PathBuf::from(&local)
+                    .join("Programs")
+                    .join("Wispr Flow")
+                    .join("Wispr Flow.exe"),
+            );
+            candidates.push(
+                PathBuf::from(&local)
+                    .join("Programs")
+                    .join("wispr-flow")
+                    .join("Wispr Flow.exe"),
+            );
+            candidates.push(
+                PathBuf::from(&local)
+                    .join("Programs")
+                    .join("WisprFlow")
+                    .join("WisprFlow.exe"),
+            );
+        }
+        if let Ok(pf) = std::env::var("PROGRAMFILES") {
+            candidates.push(PathBuf::from(&pf).join("Wispr Flow").join("Wispr Flow.exe"));
+            candidates.push(PathBuf::from(&pf).join("WisprFlow").join("Wispr Flow.exe"));
+        }
+        if let Ok(pf86) = std::env::var("PROGRAMFILES(X86)") {
+            candidates.push(
+                PathBuf::from(&pf86)
+                    .join("Wispr Flow")
+                    .join("Wispr Flow.exe"),
+            );
+        }
 
-// ── Icon ──────────────────────────────────────────────────────────────
-
-/// Neon green (#39FF14) silhouette on OLED black.
-const ICON_COLOR: (u8, u8, u8) = (57, 255, 20);
-
-/// Load the embedded DualSense PNG, resize to 32×32, and tint the silhouette.
-///
-/// The source image is a white controller on a near-black background.
-/// Each output pixel is fully opaque — luminance of the source pixel scales
-/// the tint color, so the white silhouette becomes the tint, edges anti-alias
-/// smoothly, and the OLED-black background stays black.
-fn make_icon(r: u8, g: u8, b: u8) -> Icon {
-    let img = image::load_from_memory(ICON_PNG)
-        .expect("embedded controller PNG is valid")
-        .resize_exact(ICON_SIZE, ICON_SIZE, image::imageops::FilterType::Lanczos3)
-        .into_rgb8();
-
-    let mut rgba = Vec::with_capacity((ICON_SIZE * ICON_SIZE * 4) as usize);
-    for pixel in img.pixels() {
-        // Rec. 601 luminance (0–255): white silhouette → high, black bg → low.
-        let lum = (pixel[0] as u32 * 299 + pixel[1] as u32 * 587 + pixel[2] as u32 * 114) / 1000;
-        let tr = (r as u32 * lum / 255) as u8;
-        let tg = (g as u32 * lum / 255) as u8;
-        let tb = (b as u32 * lum / 255) as u8;
-        rgba.extend_from_slice(&[tr, tg, tb, 255]);
+        candidates.into_iter().find(|p| p.exists())
     }
 
-    Icon::from_rgba(rgba, ICON_SIZE, ICON_SIZE).expect("valid icon data")
-}
+    /// Query HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\Wispr Flow.exe
+    fn wispr_flow_from_app_paths() -> Option<PathBuf> {
+        let output = std::process::Command::new("reg")
+            .args([
+                "query",
+                r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\Wispr Flow.exe",
+                "/ve",
+            ])
+            .output()
+            .ok()?;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+        if !output.status.success() {
+            return None;
+        }
 
-    #[test]
-    fn icon_loads() {
-        let (r, g, b) = ICON_COLOR;
-        make_icon(r, g, b); // must not panic
+        // Output format:  "    (Default)    REG_SZ    C:\path\to\Wispr Flow.exe"
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        for line in stdout.lines() {
+            if line.contains("REG_SZ")
+                && let Some(value) = line.split("REG_SZ").nth(1)
+            {
+                let path = PathBuf::from(value.trim());
+                if path.exists() {
+                    return Some(path);
+                }
+            }
+        }
+
+        None
     }
 
-    #[cfg(not(windows))]
-    #[test]
-    fn pump_win32_messages_noop_on_non_windows() {
-        pump_win32_messages(); // must not panic
+    /// Show a Yes/No dialog when Wispr Flow can't be found.
+    /// "Yes" opens the download page; "No" closes the dialog.
+    fn prompt_download_wispr_flow() {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            IDYES, MB_ICONWARNING, MB_YESNO, MessageBoxW,
+        };
+
+        let text: Vec<u16> = "Wispr Flow couldn't be located. Speech to Text won't work without it.\n\nWant to download?"
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
+        let caption: Vec<u16> = "Wispr Flow Not Found"
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
+
+        let result = unsafe {
+            MessageBoxW(
+                std::ptr::null_mut(),
+                text.as_ptr(),
+                caption.as_ptr(),
+                MB_YESNO | MB_ICONWARNING,
+            )
+        };
+
+        if result == IDYES {
+            let _ = std::process::Command::new("explorer.exe")
+                .arg("https://ref.wisprflow.ai/vgpnk")
+                .spawn();
+        }
     }
 
-    #[cfg(not(windows))]
-    #[test]
-    fn toggle_log_window_noop_on_non_windows() {
-        toggle_log_window(true); // must not panic
-        toggle_log_window(false);
+    fn restart_app() {
+        // If we cannot resolve our own path, log and return — do NOT fall through to
+        // exit(0), which would terminate the app permanently without restarting.
+        let exe = match std::env::current_exe() {
+            Ok(exe) => exe,
+            Err(e) => {
+                log::error!("Cannot determine exe path to restart: {e}");
+                return;
+            }
+        };
+        if let Err(e) = std::process::Command::new(&exe).spawn() {
+            log::error!("Failed to restart: {e}");
+            return;
+        }
+        // Only exit once the replacement process has been spawned successfully.
+        std::process::exit(0);
     }
 
-    #[cfg(not(windows))]
-    #[test]
-    fn prompt_download_noop_on_non_windows() {
-        prompt_download_wispr_flow(); // must not panic
+    // ── Auto-startup (HKCU Run registry key) ─────────────────────────────
+
+    fn is_auto_start_enabled() -> bool {
+        std::process::Command::new("reg")
+            .args(["query", REG_RUN_KEY, "/v", APP_NAME])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    }
+
+    fn set_auto_start(enabled: bool) {
+        if enabled {
+            let Ok(exe) = std::env::current_exe() else {
+                log::error!("Cannot determine exe path for auto-start");
+                return;
+            };
+            // Quote path to handle spaces
+            let value = format!("\"{}\"", exe.to_string_lossy());
+            let status = std::process::Command::new("reg")
+                .args([
+                    "add",
+                    REG_RUN_KEY,
+                    "/v",
+                    APP_NAME,
+                    "/t",
+                    "REG_SZ",
+                    "/d",
+                    &value,
+                    "/f",
+                ])
+                .status();
+            match status {
+                Ok(s) if s.success() => log::info!("Auto-start enabled: {value}"),
+                Ok(s) => log::warn!("Auto-start reg add failed (exit {s})"),
+                Err(e) => log::warn!("Auto-start reg add error: {e}"),
+            }
+        } else {
+            let status = std::process::Command::new("reg")
+                .args(["delete", REG_RUN_KEY, "/v", APP_NAME, "/f"])
+                .status();
+            match status {
+                Ok(s) if s.success() => log::info!("Auto-start disabled"),
+                Ok(s) => log::warn!("Auto-start reg delete failed (exit {s})"),
+                Err(e) => log::warn!("Auto-start reg delete error: {e}"),
+            }
+        }
+    }
+
+    // ── Platform helpers ──────────────────────────────────────────────────
+
+    /// Pump the Win32 message queue so the tray icon responds to clicks.
+    fn pump_win32_messages() {
+        unsafe {
+            let mut msg: MSG = std::mem::zeroed();
+            while PeekMessageW(&mut msg, std::ptr::null_mut(), 0, 0, PM_REMOVE) != 0 {
+                TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+            }
+        }
+    }
+
+    /// Show or hide the console log window via ShowWindow.
+    fn toggle_log_window(show: bool) {
+        unsafe {
+            let console = GetConsoleWindow();
+            if !console.is_null() {
+                if show {
+                    ShowWindow(console, SW_SHOW);
+                    // Disable the X button so the user can't accidentally close the process
+                    let hmenu = GetSystemMenu(console, 0);
+                    if !hmenu.is_null() {
+                        DeleteMenu(hmenu, SC_CLOSE, MF_BYCOMMAND);
+                    }
+                } else {
+                    ShowWindow(console, SW_HIDE);
+                }
+            }
+        }
+    }
+
+    // ── Embedded controller PNG ────────────────────────────────────────────
+
+    /// White DualSense silhouette on near-black background.
+    /// Same source image used for icon.ico (exe / installer icon).
+    const ICON_PNG: &[u8] = include_bytes!("../imgs/ChatGPT Image Feb 23, 2026, 05_30_47 AM.png");
+
+    // ── Icon ──────────────────────────────────────────────────────────────
+
+    /// Neon green (#39FF14) silhouette on OLED black.
+    const ICON_COLOR: (u8, u8, u8) = (57, 255, 20);
+
+    /// Load the embedded DualSense PNG, resize to 32×32, and tint the silhouette.
+    ///
+    /// The source image is a white controller on a near-black background.
+    /// Each output pixel is fully opaque — luminance of the source pixel scales
+    /// the tint color, so the white silhouette becomes the tint, edges anti-alias
+    /// smoothly, and the OLED-black background stays black.
+    fn make_icon(r: u8, g: u8, b: u8) -> Icon {
+        let img = image::load_from_memory(ICON_PNG)
+            .expect("embedded controller PNG is valid")
+            .resize_exact(ICON_SIZE, ICON_SIZE, image::imageops::FilterType::Lanczos3)
+            .into_rgb8();
+
+        let mut rgba = Vec::with_capacity((ICON_SIZE * ICON_SIZE * 4) as usize);
+        for pixel in img.pixels() {
+            // Rec. 601 luminance (0–255): white silhouette → high, black bg → low.
+            let lum =
+                (pixel[0] as u32 * 299 + pixel[1] as u32 * 587 + pixel[2] as u32 * 114) / 1000;
+            let tr = (r as u32 * lum / 255) as u8;
+            let tg = (g as u32 * lum / 255) as u8;
+            let tb = (b as u32 * lum / 255) as u8;
+            rgba.extend_from_slice(&[tr, tg, tb, 255]);
+        }
+
+        Icon::from_rgba(rgba, ICON_SIZE, ICON_SIZE).expect("valid icon data")
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn icon_loads() {
+            let (r, g, b) = ICON_COLOR;
+            make_icon(r, g, b); // must not panic
+        }
     }
 }

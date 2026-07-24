@@ -1,5 +1,6 @@
 /// Toggle the default audio capture (microphone) mute state.
-/// Uses the Windows Core Audio API — no third-party dependencies.
+/// Platform dispatch: Windows uses the Core Audio COM API (no third-party
+/// dependencies); Linux goes through `platform::mic` (pactl/wpctl, SPEC §4).
 /// Profile-agnostic: called directly from the input loop on any profile.
 use std::sync::atomic::AtomicBool;
 
@@ -79,15 +80,52 @@ mod inner {
     }
 }
 
+/// Linux: query the real mute state via pactl/wpctl and prime MIC_MUTED.
+/// Best-effort — if neither tool is available the cache keeps its default.
+#[cfg(target_os = "linux")]
+fn linux_init() {
+    use std::sync::atomic::Ordering;
+    if let Some(muted) = crate::platform::mic_is_muted() {
+        MIC_MUTED.store(muted, Ordering::Relaxed);
+        log::debug!(
+            "mic: initial state = {}",
+            if muted { "muted" } else { "unmuted" }
+        );
+    }
+}
+
+/// Linux: toggle via pactl/wpctl, then re-query the real state so the LED
+/// mirrors the system (Windows behavior). If the query fails, fall back to
+/// the cached toggle result so the LED still tracks the toggle.
+#[cfg(target_os = "linux")]
+fn linux_toggle_mute() {
+    use std::sync::atomic::Ordering;
+    match crate::platform::mic_toggle() {
+        Ok(()) => {
+            let new_state = crate::platform::mic_is_muted()
+                .unwrap_or_else(|| !MIC_MUTED.load(Ordering::Relaxed));
+            MIC_MUTED.store(new_state, Ordering::Relaxed);
+            log::info!("mic: {}", if new_state { "muted" } else { "unmuted" });
+        }
+        Err(e) => {
+            log::warn!("mic: toggle failed: {e}");
+        }
+    }
+}
+
 /// Query the current system mute state and prime MIC_MUTED.
 /// Call once at startup (on a blocking thread) before the first output frame.
 pub fn init() {
     #[cfg(windows)]
     inner::init();
+    #[cfg(target_os = "linux")]
+    linux_init();
 }
 
 /// Toggle system mic mute and update MIC_MUTED.
 pub fn toggle_mute() {
     #[cfg(windows)]
     inner::toggle_mute();
+    #[cfg(target_os = "linux")]
+    linux_toggle_mute();
 }

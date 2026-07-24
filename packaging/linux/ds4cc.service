@@ -1,0 +1,13 @@
+[Unit]
+Description=DS4CC - DualSense/DS4 shortcut mapper daemon
+Documentation=https://github.com/VeigaPunk/DS4CC
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/ds4cc
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target

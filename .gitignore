@@ -3,3 +3,4 @@
 *.pdb
 .claude/
 installer/output/
+/vendor-linux/

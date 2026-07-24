@@ -22,6 +22,24 @@ fn conn_from_bus_type(bt: BusType) -> ConnectionType {
     }
 }
 
+/// Does this hidapi error message mean the controller went away?
+///
+/// Windows: error 1167 (ERROR_DEVICE_NOT_CONNECTED) or "not connected".
+/// Linux hidraw: the kernel returns ENODEV ("No such device") on USB unplug
+/// or Bluetooth link drop. Both must funnel into the same USB-priority /
+/// BT-fallback reconnect path in `main.rs` instead of a silent error loop.
+fn is_disconnect_error(msg: &str) -> bool {
+    let lower = msg.to_ascii_lowercase();
+    msg.contains("1167") || lower.contains("not connected") || lower.contains("no such device")
+}
+
+/// Does this hidapi open error look like a hidraw permission problem?
+#[cfg(target_os = "linux")]
+fn looks_like_permission_error(msg: &str) -> bool {
+    let lower = msg.to_ascii_lowercase();
+    lower.contains("permission denied") || lower.contains("operation not permitted")
+}
+
 /// Information about a discovered controller.
 pub struct ControllerInfo {
     pub controller_type: ControllerType,
@@ -79,7 +97,26 @@ pub fn open_device(api: &HidApi, info: &ControllerInfo) -> Result<HidDevice, hid
             message: "Invalid device path".into(),
         }
     })?;
-    let device = api.open_path(&cpath)?;
+    let device = match api.open_path(&cpath) {
+        Ok(device) => device,
+        Err(e) => {
+            // Linux hidraw nodes (/dev/hidrawN) are root:input 0660 by
+            // default — a permission error here means the udev rule isn't
+            // installed. Log precise remediation; the reconnect loop will
+            // keep retrying, so this stays non-fatal like any open failure.
+            #[cfg(target_os = "linux")]
+            if looks_like_permission_error(&format!("{e}")) {
+                log::error!(
+                    "Permission denied opening {} — hidraw access requires the ds4cc udev rule. \
+                     Remediation: sudo install -m644 packaging/linux/99-ds4cc.rules \
+                     /etc/udev/rules.d/ && sudo udevadm control --reload-rules && \
+                     sudo udevadm trigger; add your user to the 'input' group and re-login.",
+                    info.path
+                );
+            }
+            return Err(e);
+        }
+    };
     device.set_blocking_mode(false)?;
     Ok(device)
 }
@@ -145,7 +182,7 @@ impl HidHandle {
                 Ok(n) => Ok(buf[..n].to_vec()),
                 Err(e) => {
                     let msg = format!("{e}");
-                    if msg.contains("1167") || msg.contains("not connected") {
+                    if is_disconnect_error(&msg) {
                         Err(()) // device disconnected
                     } else {
                         log::error!("HID read error: {e}");
@@ -235,5 +272,29 @@ mod tests {
         assert_eq!(conn_from_bus_type(BusType::Usb), ConnectionType::Usb);
         // Unknown/I2C/SPI bus types fall back to USB (safest default: skips BT CRC).
         assert_eq!(conn_from_bus_type(BusType::Unknown), ConnectionType::Usb);
+    }
+
+    #[test]
+    fn disconnect_detection_covers_windows_and_linux() {
+        // Windows ERROR_DEVICE_NOT_CONNECTED
+        assert!(is_disconnect_error("hidapi error 1167"));
+        assert!(is_disconnect_error("The device is not connected."));
+        // Linux hidraw ENODEV on USB unplug / BT link drop
+        assert!(is_disconnect_error("No such device"));
+        assert!(is_disconnect_error("hid_read_timeout: no such device"));
+        // Transient errors must NOT be treated as disconnects
+        assert!(!is_disconnect_error("Input/output error"));
+        assert!(!is_disconnect_error("Interrupted system call"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn permission_error_detection() {
+        assert!(looks_like_permission_error(
+            "Permission denied (os error 13)"
+        ));
+        assert!(looks_like_permission_error("Operation not permitted"));
+        assert!(!looks_like_permission_error("No such device"));
+        assert!(!looks_like_permission_error("unable to open device"));
     }
 }
