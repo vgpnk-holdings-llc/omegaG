@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=DS4CC
+GenericName=Controller shortcut mapper
+Comment=Bridge DualSense/DS4 controllers with AI coding agents
+Exec=ds4cc
+Terminal=false
+X-GNOME-Autostart-enabled=true

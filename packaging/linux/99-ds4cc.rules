@@ -1,0 +1,4 @@
+# DualSense / DS4 hidraw access
+KERNEL=="hidraw*", ATTRS{idVendor}=="054c", ATTRS{idProduct}=="05c4|09cc|0ba0|0ce6|0df2", MODE="0660", GROUP="input", TAG+="uaccess"
+# uinput for ds4cc virtual keyboard/mouse
+KERNEL=="uinput", MODE="0660", GROUP="uinput", OPTIONS+="static_node=uinput"

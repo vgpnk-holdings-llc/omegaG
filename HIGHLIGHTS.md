@@ -166,3 +166,63 @@ share = "launcher:myaction"
   - **Submit timing:** `ENTER_DELAY_MS == 16` constant, two-phase order (text → 16 ms → Return), Return omitted when `enter=false`, zero per-character delay on both backends
 
 **Blockers:** none. The Linux build injects natively on Wayland via `wtype` (validated on Hyprland) and falls back to `xdotool` on X11. Binary links only on Windows for the Win32 `SendInput` path (expected); the full test suite runs on Linux.
+
+---
+
+# Linux Port (Ubuntu/Arch) — Technical Highlights
+
+## What was added
+
+DS4CC now runs natively on Linux (Ubuntu 22.04+, Arch) with **all** legacy
+shortcut-mapper features preserved over USB and Bluetooth. The optional Codex
+controller runtime stays Windows-only; its config still parses on Linux and is
+ignored with a warning.
+
+## Tray: StatusNotifierItem via ksni
+
+The Windows `tray-icon` implementation is unchanged behind `cfg(windows)`;
+Linux gets a `ksni` (blocking API) tray on its own std thread with full menu
+parity:
+
+| Windows | Linux |
+|---|---|
+| Open Wispr Flow | "Open voice app" — only when `[voice] app_command` is set |
+| Restart | Re-exec of `current_exe` via exec(2) — same PID, fresh image |
+| Check for Update | Linux self-update flow (below) |
+| Enable auto start-up | `systemd --user` unit, XDG autostart fallback |
+| Mouse: Left Stick | Same shared `Arc<AtomicBool>` with the mapper |
+| Show Log Window | "Open log file" (`xdg-open ~/.local/state/ds4cc/ds4cc.log`) |
+| Exit | Exit |
+
+The icon is `assets/icon.png` (64×64 RGBA, extracted once from `icon.ico`),
+embedded with `include_bytes!` and converted to premultiplied ARGB32 for
+`ksni::Icon`. If the D-Bus session bus or a StatusNotifierWatcher is
+unreachable (headless, GNOME without the AppIndicator extension), the tray
+thread logs and exits gracefully — the daemon keeps running; `--no-tray` and
+an automatic session-bus check let `main` skip it entirely.
+
+## Self-update without an installer
+
+The Linux update flow queries the same GitHub releases API, selects the
+asset whose name contains `linux` **and** `x86_64`
+(`ds4cc-linux-x86_64.tar.gz`), downloads it, extracts with the system
+`tar xzf` into a temp dir, `chmod +x`s the binary, stages it next to the
+running executable, and atomically `rename(2)`s it over `current_exe`
+(Linux permits replacing a running binary). The result is surfaced as a
+desktop notification (`notify-send`, log fallback) prompting a tray Restart.
+Releases without a Linux asset degrade to a graceful "no update available".
+The asset-name matcher is unit-tested against fake release JSON (x86_64 vs
+aarch64 vs Windows-only releases, case-insensitivity, empty asset lists).
+
+## Packaging
+
+- `packaging/linux/99-ds4cc.rules` — hidraw access for Sony VID `054c`
+  controllers (DS4 v1/v2, DualSense, DualSense Edge) via `input` group +
+  `uaccess`; `/dev/uinput` for the `uinput` group.
+- `packaging/linux/ds4cc.service` — `systemd --user` unit
+  (`ExecStart=%h/.local/bin/ds4cc`, `Restart=on-failure`).
+- `packaging/linux/ds4cc.desktop` — XDG autostart fallback.
+- `packaging/linux/install.sh` — POSIX sh, `set -eu`; detects apt vs pacman,
+  installs runtime deps, creates the `uinput` group, installs the udev rule,
+  installs the binary to `~/.local/bin`, enables the user unit, and prints
+  re-login + Bluetooth pairing (PS + Share) instructions.
