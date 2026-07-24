@@ -15,6 +15,28 @@ pub struct Config {
     pub tmux: TmuxConfig,
     pub launchers: HashMap<String, LauncherAction>,
     pub codex_micro: CodexMicroConfig,
+    pub voice: VoiceConfig,
+}
+
+/// Optional voice-app integration.
+///
+/// `app_command` names an external voice app to launch from the tray
+/// ("Open voice app"). Used on Linux; ignored on Windows (which keeps the
+/// built-in Wispr Flow integration). Empty = feature disabled.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct VoiceConfig {
+    /// Absolute argv-style command is NOT split here — launcher/tray code
+    /// spawns it without a shell. Empty string = unset.
+    pub app_command: String,
+}
+
+impl Default for VoiceConfig {
+    fn default() -> Self {
+        Self {
+            app_command: String::new(),
+        }
+    }
 }
 
 /// Opt-in Codex Micro semantic layer. Existing controller behavior is unchanged
@@ -293,6 +315,7 @@ impl Default for Config {
             tmux: TmuxConfig::default(),
             launchers,
             codex_micro: CodexMicroConfig::default(),
+            voice: VoiceConfig::default(),
         }
     }
 }
@@ -315,30 +338,49 @@ impl Config {
         match std::fs::read_to_string(&config_path) {
             Ok(contents) => match toml::from_str::<Self>(&contents) {
                 Ok(mut config) => {
-                    log::info!("Loaded config from {config_path}");
+                    log::info!("Loaded config from {}", config_path.display());
                     Self::merge_default_launchers(&mut config.launchers);
                     config.codex_micro.normalize();
+                    #[cfg(target_os = "linux")]
+                    if config.codex_micro.enabled {
+                        log::warn!(
+                            "[codex_micro] enabled, but the codex runtime is Windows-only; ignored on Linux"
+                        );
+                    }
                     config
                 }
                 Err(e) => {
-                    log::warn!("Failed to parse config file {config_path}: {e}. Using defaults.");
+                    log::warn!(
+                        "Failed to parse config file {}: {e}. Using defaults.",
+                        config_path.display()
+                    );
                     Self::default()
                 }
             },
             Err(_) => {
-                log::info!("No config file found at {config_path}. Using defaults.");
+                log::info!(
+                    "No config file found at {}. Using defaults.",
+                    config_path.display()
+                );
                 Self::default()
             }
         }
     }
 }
 
-fn config_file_path() -> String {
-    if let Ok(appdata) = std::env::var("APPDATA") {
-        format!("{appdata}\\ds4cc\\config.toml")
-    } else {
-        "ds4cc.toml".into()
+/// Config file path: `platform::config_dir()/config.toml`.
+///
+/// Windows: `%APPDATA%\ds4cc\config.toml` (legacy behavior; when APPDATA is
+/// unset, `config_dir()` is empty and the legacy relative `ds4cc.toml`
+/// fallback is preserved). Linux: `$XDG_CONFIG_HOME/ds4cc/config.toml` or
+/// `~/.config/ds4cc/config.toml`.
+fn config_file_path() -> std::path::PathBuf {
+    let dir = crate::platform::config_dir();
+    if dir.as_os_str().is_empty() {
+        // Legacy Windows fallback when %APPDATA% is unavailable.
+        return std::path::PathBuf::from("ds4cc.toml");
     }
+    dir.join("config.toml")
 }
 
 #[cfg(test)]
@@ -470,6 +512,41 @@ mod tests {
             .expect("godspeed must exist after merge");
         assert_eq!(gs.text, "| godspeed");
         assert!(gs.enter);
+    }
+
+    #[test]
+    fn voice_section_defaults_to_empty() {
+        let config: Config = toml::from_str("").unwrap();
+        assert_eq!(config.voice.app_command, "");
+    }
+
+    #[test]
+    fn deserialize_voice_app_command() {
+        let config: Config = toml::from_str(
+            r#"
+            [voice]
+            app_command = "/usr/bin/wispr-flow"
+            "#,
+        )
+        .unwrap();
+        assert_eq!(config.voice.app_command, "/usr/bin/wispr-flow");
+    }
+
+    #[test]
+    fn codex_micro_stays_parseable_with_voice_section() {
+        // Schema is OS-neutral: [codex_micro] must parse alongside [voice].
+        let config: Config = toml::from_str(
+            r#"
+            [codex_micro]
+            enabled = true
+
+            [voice]
+            app_command = ""
+            "#,
+        )
+        .unwrap();
+        assert!(config.codex_micro.enabled);
+        assert_eq!(config.voice.app_command, "");
     }
 
     #[test]

@@ -1,6 +1,11 @@
+// The codex session-polling + status→LED layer is Windows-only (SPEC §1).
+#[cfg(windows)]
 mod codex_micro;
+#[cfg(windows)]
 mod codex_protocol;
+#[cfg(windows)]
 mod codex_runtime;
+#[cfg(windows)]
 mod codex_voice;
 mod config;
 mod controller;
@@ -8,19 +13,23 @@ mod crc32;
 mod detect;
 mod hid;
 mod input;
+mod keys;
 mod launcher;
 mod mapper;
 mod mic;
 mod output;
+mod platform;
 mod tmux_detect;
 mod tray;
 mod update;
+// wsl.rs carries an inner #![cfg(windows)] — compiled out on Linux.
 mod wsl;
 
 use crate::controller::ConnectionType;
 use crate::output::OutputState;
 
 use std::sync::Arc;
+#[cfg(windows)]
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::time::{Duration, sleep};
@@ -57,6 +66,8 @@ fn enqueue_action(
     })
 }
 
+/// Codex semantic input consumes controller buttons/sticks/touch (Windows-only).
+#[cfg(windows)]
 fn suppress_semantic_input(input: &mut input::UnifiedInput) {
     input.buttons = input::ButtonState::default();
     input.left_stick = (128, 128);
@@ -64,25 +75,77 @@ fn suppress_semantic_input(input: &mut input::UnifiedInput) {
     input.touchpad = [input::TouchPoint::default(); 2];
 }
 
+/// Parsed command-line flags (SPEC §9 — minimal, hand-rolled, no clap).
+struct CliFlags {
+    verbose: bool,
+    no_tray: bool,
+}
+
+fn print_usage() {
+    println!(
+        "ds4cc {version} — DualSense/DS4 shortcut-mapper daemon\n\
+         \n\
+         USAGE:\n\
+         \x20   ds4cc [OPTIONS]\n\
+         \n\
+         OPTIONS:\n\
+         \x20   -h, --help       Print this help and exit\n\
+         \x20   -V, --version    Print version and exit\n\
+         \x20   -v, --verbose    Debug-level logging\n\
+         \x20       --no-tray    Run without the system tray icon",
+        version = env!("CARGO_PKG_VERSION")
+    );
+}
+
+fn parse_cli() -> CliFlags {
+    let mut flags = CliFlags {
+        verbose: false,
+        no_tray: false,
+    };
+    for arg in std::env::args().skip(1) {
+        match arg.as_str() {
+            "-h" | "--help" => {
+                print_usage();
+                std::process::exit(0);
+            }
+            "-V" | "--version" => {
+                println!("ds4cc {}", env!("CARGO_PKG_VERSION"));
+                std::process::exit(0);
+            }
+            "-v" | "--verbose" => flags.verbose = true,
+            "--no-tray" => flags.no_tray = true,
+            other => {
+                eprintln!("ds4cc: unknown argument '{other}'\n");
+                print_usage();
+                std::process::exit(2);
+            }
+        }
+    }
+    flags
+}
+
 #[tokio::main]
 async fn main() {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
-        .format(|buf, record| {
-            use std::io::Write;
-            let ts = buf.timestamp_millis();
-            // Compact: "10:30:45.123 INFO  message"
-            // Strip date prefix — only keep HH:MM:SS.mmm
-            let ts_str = ts.to_string();
-            let time_part = ts_str.split('T').nth(1).unwrap_or(&ts_str);
-            let time_part = time_part.trim_end_matches('Z');
-            write!(
-                buf,
-                "{time_part} {:<5} {}\r\n",
-                record.level(),
-                record.args()
-            )
-        })
-        .init();
+    let cli = parse_cli();
+    env_logger::Builder::from_env(
+        env_logger::Env::default().default_filter_or(if cli.verbose { "debug" } else { "info" }),
+    )
+    .format(|buf, record| {
+        use std::io::Write;
+        let ts = buf.timestamp_millis();
+        // Compact: "10:30:45.123 INFO  message"
+        // Strip date prefix — only keep HH:MM:SS.mmm
+        let ts_str = ts.to_string();
+        let time_part = ts_str.split('T').nth(1).unwrap_or(&ts_str);
+        let time_part = time_part.trim_end_matches('Z');
+        write!(
+            buf,
+            "{time_part} {:<5} {}\r\n",
+            record.level(),
+            record.args()
+        )
+    })
+    .init();
 
     // Hide console window immediately — app runs as a tray icon.
     // Logs still accumulate; user can show the console via tray menu.
@@ -100,13 +163,18 @@ async fn main() {
 
     let mut cfg = config::Config::load();
     cfg.codex_micro.normalize();
-    let mut initial_codex_state = codex_micro::CodexMicro::default();
-    initial_codex_state.configure_sources(
-        codex_micro::SourcePolicy::parse(&cfg.codex_micro.source_policy),
-        cfg.codex_micro.custom_order.clone(),
-    );
-    let codex_state = Arc::new(Mutex::new(initial_codex_state));
-    let started = std::time::Instant::now();
+
+    // ── Codex runtime (Windows-only; SPEC §1) ─────────────────────────────
+    #[cfg(windows)]
+    let codex_state = {
+        let mut initial_codex_state = codex_micro::CodexMicro::default();
+        initial_codex_state.configure_sources(
+            codex_micro::SourcePolicy::parse(&cfg.codex_micro.source_policy),
+            cfg.codex_micro.custom_order.clone(),
+        );
+        Arc::new(Mutex::new(initial_codex_state))
+    };
+    #[cfg(windows)]
     let (codex_runtime, codex_events) = if cfg.codex_micro.enabled {
         let (event_tx, event_rx) = std::sync::mpsc::sync_channel(128);
         (
@@ -119,6 +187,7 @@ async fn main() {
     } else {
         (None, None)
     };
+    #[cfg(windows)]
     if let Some(events) = codex_events {
         let state = Arc::clone(&codex_state);
         let _ = std::thread::Builder::new()
@@ -141,6 +210,13 @@ async fn main() {
                 }
             });
     }
+    #[cfg(target_os = "linux")]
+    if cfg.codex_micro.enabled {
+        log::warn!("codex runtime is Windows-only; ignored");
+    }
+
+    #[cfg(windows)]
+    let started = std::time::Instant::now();
 
     // Detect keybinds (tmux prefix + bindings, Claude Code keybindings.json)
     // in a single WSL round-trip. Best-effort — defaults cover any gap.
@@ -150,8 +226,28 @@ async fn main() {
     // Owned here; cloned into tray thread and each input loop iteration.
     let mouse_stick_active = Arc::new(AtomicBool::new(false));
 
-    // Tray icon
-    let tray_tx = tray::spawn(Arc::clone(&mouse_stick_active));
+    // Create the input injector up front. Degraded-ok: if the OS injection
+    // device is unavailable (Linux: /dev/uinput), the daemon keeps running
+    // and injection calls become logged no-ops (SPEC §4).
+    mapper::init_injector();
+
+    // Tray icon — skipped with --no-tray, and auto-skipped on Linux when no
+    // D-Bus session bus is reachable (headless; SPEC §9).
+    #[cfg(target_os = "linux")]
+    let no_tray = {
+        let dbus = tray::session_bus_available();
+        if !cli.no_tray && !dbus {
+            log::info!("No D-Bus session bus reachable — running without tray icon");
+        }
+        cli.no_tray || !dbus
+    };
+    #[cfg(windows)]
+    let no_tray = cli.no_tray;
+    let tray_tx = if no_tray {
+        None
+    } else {
+        Some(tray::spawn(Arc::clone(&mouse_stick_active)))
+    };
 
     // Initialize HID
     let mut api = match hidapi::HidApi::new() {
@@ -207,7 +303,9 @@ async fn main() {
         // DS4 has no touchpad parsing — auto-enable stick mouse mode.
         // DualSense switches back to touchpad mode (its native input).
         let stick = info.controller_type.is_ds4();
-        let _ = tray_tx.send(tray::TrayCmd::SetStickMode(stick));
+        if let Some(tx) = &tray_tx {
+            let _ = tx.send(tray::TrayCmd::SetStickMode(stick));
+        }
 
         let handle = hid::HidHandle::new(device);
         let ct = info.controller_type;
@@ -261,26 +359,34 @@ async fn main() {
         // Spawn output loop for this connection
         let output_handle = handle.clone_handle();
         let lightbar_color = cfg.lightbar.clone();
-        let codex_output = Arc::clone(&codex_state);
-        let codex_cfg = cfg.codex_micro.clone();
-        let runtime_view = codex_runtime
-            .as_ref()
-            .map(|runtime| Arc::clone(&runtime.view));
+        #[cfg(windows)]
+        let output_task = {
+            let codex_output = Arc::clone(&codex_state);
+            let codex_cfg = cfg.codex_micro.clone();
+            let runtime_view = codex_runtime
+                .as_ref()
+                .map(|runtime| Arc::clone(&runtime.view));
+            tokio::spawn(async move {
+                run_output_loop(
+                    output_handle,
+                    ct,
+                    conn,
+                    lightbar_color,
+                    codex_output,
+                    codex_cfg,
+                    runtime_view,
+                    started,
+                )
+                .await;
+            })
+        };
+        #[cfg(not(windows))]
         let output_task = tokio::spawn(async move {
-            run_output_loop(
-                output_handle,
-                ct,
-                conn,
-                lightbar_color,
-                codex_output,
-                codex_cfg,
-                runtime_view,
-                started,
-            )
-            .await;
+            run_output_loop(output_handle, ct, conn, lightbar_color).await;
         });
 
         // Run input loop — returns when device disconnects or USB scanner signals
+        #[cfg(windows)]
         run_input_loop(
             handle,
             ct,
@@ -297,6 +403,17 @@ async fn main() {
             codex_runtime
                 .as_ref()
                 .map_or(0, |runtime| runtime.epoch.load(Ordering::Acquire)),
+        )
+        .await;
+        #[cfg(not(windows))]
+        run_input_loop(
+            handle,
+            ct,
+            conn,
+            &cfg,
+            &detected,
+            Arc::clone(&mouse_stick_active),
+            usb_available.clone(),
         )
         .await;
 
@@ -326,6 +443,7 @@ async fn main() {
 
 /// Input loop: read HID reports, parse, map to keystrokes.
 /// Returns when the device disconnects or `usb_switch_flag` is set (BT→USB switch).
+#[cfg(windows)]
 #[allow(clippy::too_many_arguments)]
 async fn run_input_loop(
     handle: hid::HidHandle,
@@ -507,6 +625,8 @@ async fn run_input_loop(
 const PLAYER_LEDS: u8 = 0x04;
 
 /// Output loop: keep the static lightbar color, player LED, and mic-mute LED updated.
+/// Windows: overlays codex runtime/session status onto lightbar + rumble.
+#[cfg(windows)]
 #[allow(clippy::too_many_arguments)]
 async fn run_output_loop(
     handle: hid::HidHandle,
@@ -580,9 +700,170 @@ async fn run_output_loop(
     }
 }
 
+/// Input loop (Linux): read HID reports, parse, map to keystrokes.
+/// No codex semantic layer — identical to the Windows loop minus codex dispatch.
+/// Returns when the device disconnects or `usb_switch_flag` is set (BT→USB switch).
+#[cfg(not(windows))]
+async fn run_input_loop(
+    handle: hid::HidHandle,
+    ct: controller::ControllerType,
+    conn: controller::ConnectionType,
+    cfg: &config::Config,
+    detected: &detect::Detected,
+    mouse_stick_active: Arc<AtomicBool>,
+    usb_switch_flag: Option<Arc<AtomicBool>>,
+) {
+    let mut mapper_state = mapper::MapperState::new(cfg, detected, mouse_stick_active);
+    let mut consecutive_errors = 0u32;
+    let mut first_report = true;
+    let mut last_mute = false;
+    let mut running = true;
+    // FIFO queue: ordinary traffic is admission-limited without blocking HID.
+    // Safety KeyUp releases bypass that limit and therefore cannot be dropped
+    // by motion/repeat saturation.
+    let (action_tx, mut action_rx) = tokio::sync::mpsc::unbounded_channel::<mapper::Action>();
+    let ordinary_pending = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let worker_pending = Arc::clone(&ordinary_pending);
+    let action_worker = tokio::spawn(async move {
+        while let Some(action) = action_rx.recv().await {
+            if !action.is_safety_release() {
+                worker_pending.fetch_sub(1, Ordering::AcqRel);
+            }
+            // execute_action blocks (uinput emit / process spawn + the 16 ms Enter
+            // guard sleep). Run it on the blocking pool and await so the async
+            // runtime is never starved; awaiting one action at a time preserves
+            // exact FIFO execution order.
+            if let Err(e) =
+                tokio::task::spawn_blocking(move || mapper::execute_action(&action)).await
+            {
+                log::warn!("action worker: execution task failed to join: {e}");
+            }
+        }
+    });
+
+    while running {
+        let read_result = handle.read().await;
+        match read_result {
+            Err(()) => {
+                // Device disconnected
+                break;
+            }
+            Ok(data) if data.is_empty() => {
+                // No data available — yield and retry
+                sleep(Duration::from_millis(4)).await;
+                consecutive_errors = 0;
+
+                // Check if USB scanner detected a USB controller (BT→USB switch)
+                if let Some(ref flag) = usb_switch_flag
+                    && flag.load(Ordering::Relaxed)
+                {
+                    log::info!("USB controller available — switching from Bluetooth");
+                    break;
+                }
+
+                continue;
+            }
+            Ok(data) => {
+                let n = data.len();
+
+                if first_report {
+                    let hex: Vec<String> =
+                        data.iter().take(16).map(|b| format!("{b:02X}")).collect();
+                    log::info!("First report ({n} bytes): {}", hex.join(" "));
+                    first_report = false;
+                }
+
+                // Validate CRC on Bluetooth
+                if conn == ConnectionType::Bluetooth && !input::validate_bt_crc(ct, &data) {
+                    consecutive_errors += 1;
+                    if consecutive_errors % 100 == 1 {
+                        log::warn!("BT CRC validation failed ({consecutive_errors} times)");
+                    }
+                    continue;
+                }
+
+                match input::parse(ct, conn, &data) {
+                    Ok(unified) => {
+                        consecutive_errors = 0;
+                        let actions = mapper_state.update(&unified);
+                        for action in actions {
+                            log::debug!("Action: {action:?}");
+                            match enqueue_action(&action_tx, &ordinary_pending, action) {
+                                Ok(_) => {}
+                                Err(EnqueueError::Full) => {
+                                    log::warn!("Action queue full — dropping action");
+                                }
+                                Err(EnqueueError::Closed) => {
+                                    log::warn!("Action worker dropped; stopping input loop");
+                                    running = false;
+                                    break;
+                                }
+                            }
+                        }
+                        if !running {
+                            break;
+                        }
+
+                        // Mute button — toggle system mic on press (DualSense only; DS4 has no mic)
+                        let mute_now = unified.buttons.mute;
+                        if ct.is_dualsense() && mute_now && !last_mute {
+                            tokio::task::spawn_blocking(mic::toggle_mute);
+                        }
+                        last_mute = mute_now;
+                    }
+                    Err(e) => {
+                        consecutive_errors += 1;
+                        if consecutive_errors % 100 == 1 {
+                            log::warn!("Input parse error ({consecutive_errors}): {e}");
+                        }
+                    }
+                }
+            }
+        }
+    }
+    drop(action_tx);
+    action_worker.await.ok();
+}
+
+/// Output loop (Linux): static [lightbar] color, player LED, mic-mute LED.
+/// No codex status→LED projection (Windows-only, SPEC §1/§5).
+#[cfg(not(windows))]
+async fn run_output_loop(
+    handle: hid::HidHandle,
+    ct: controller::ControllerType,
+    conn: controller::ConnectionType,
+    lightbar_color: config::ColorConfig,
+) {
+    let mut bt_seq = 0u8;
+
+    // Prime mic mute state from system before first frame
+    tokio::task::spawn_blocking(mic::init).await.ok();
+
+    // The output report is static except for the mute LED, but resending
+    // periodically keeps the controller state correct after wake/reconnect blips.
+    let mut ticker = tokio::time::interval(Duration::from_millis(100));
+
+    loop {
+        ticker.tick().await;
+        let out = OutputState {
+            lightbar_r: lightbar_color.r,
+            lightbar_g: lightbar_color.g,
+            lightbar_b: lightbar_color.b,
+            rumble_left: 0,
+            rumble_right: 0,
+            player_leds: PLAYER_LEDS,
+            mute_led: mic::MIC_MUTED.load(Ordering::Relaxed) as u8,
+        };
+        let report = output::build_report(ct, conn, &out, &mut bt_seq);
+        handle.write(report).await;
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{ORDINARY_ACTION_LIMIT, enqueue_action, suppress_semantic_input};
+    #[cfg(windows)]
+    use super::suppress_semantic_input;
+    use super::{ORDINARY_ACTION_LIMIT, enqueue_action};
     use crate::mapper::{Action, VKey};
     /// Regression for the action worker: draining the bounded FIFO and awaiting
     /// each `spawn_blocking` execution one at a time must preserve exact input
@@ -631,6 +912,7 @@ mod tests {
         assert!(saw_release);
     }
 
+    #[cfg(windows)]
     #[test]
     fn exclusive_semantic_input_suppresses_buttons_sticks_and_touch() {
         let mut input = crate::input::UnifiedInput::default();

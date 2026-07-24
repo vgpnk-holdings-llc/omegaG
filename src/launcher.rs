@@ -49,6 +49,43 @@ pub fn builtin_action(name: &str) -> Option<LauncherAction> {
     }
 }
 
+// ── Voice app launching (Linux) ───────────────────────────────────────
+//
+// The Windows tray has "Open Wispr Flow" (a Windows exe). On Linux there is
+// no bundled voice app: the user points `[voice] app_command` at whatever
+// they use, and the tray's "Open voice app" item calls this. No shell is
+// involved — the command string is split into argv and spawned directly.
+
+/// Spawn the configured voice app from `[voice] app_command`.
+///
+/// Returns `true` if the process was spawned. Empty/whitespace command is a
+/// no-op with a log line (the tray hides the item in that case); a spawn
+/// failure is logged and non-fatal.
+#[cfg(target_os = "linux")]
+pub fn launch_voice_app(app_command: &str) -> bool {
+    let argv: Vec<&str> = app_command.split_whitespace().collect();
+    let Some((prog, args)) = argv.split_first() else {
+        log::debug!("[voice] app_command is empty — voice app launch is a no-op");
+        return false;
+    };
+    match std::process::Command::new(prog)
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+    {
+        Ok(_child) => {
+            log::info!("Launched voice app: {app_command}");
+            true
+        }
+        Err(e) => {
+            log::warn!("Failed to launch voice app '{app_command}': {e}");
+            false
+        }
+    }
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -373,5 +410,57 @@ mod tests {
             actions.iter().any(|a| matches!(a, Action::KeyCombo(k) if *k == vec![crate::mapper::VKey::Control, crate::mapper::VKey::U])),
             "R3 default must still be Ctrl+U"
         );
+    }
+
+    // ── Voice app launching (Linux) ───────────────────────────────────
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn voice_app_empty_command_is_noop() {
+        assert!(!launch_voice_app(""));
+        assert!(!launch_voice_app("   "));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn voice_app_missing_binary_fails_gracefully() {
+        assert!(!launch_voice_app("/definitely/not/a/real/voice-app --flag"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn voice_app_spawns_argv_without_shell() {
+        // A script that records its argv; proves no-shell argv splitting.
+        let dir = std::env::temp_dir().join(format!("ds4cc-voice-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let marker = dir.join("marker");
+        let script = dir.join("voice.sh");
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\nprintf '%s' \"$1 $2\" > '{}'\n",
+                marker.display()
+            ),
+        )
+        .unwrap();
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+
+        let cmd = format!("{} arg1 arg2", script.display());
+        assert!(launch_voice_app(&cmd));
+
+        // Wait briefly for the spawned script to write the marker.
+        let mut contents = String::new();
+        for _ in 0..50 {
+            if let Ok(c) = std::fs::read_to_string(&marker) {
+                contents = c;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(contents, "arg1 arg2");
     }
 }

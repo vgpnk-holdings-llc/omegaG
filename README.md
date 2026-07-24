@@ -357,6 +357,107 @@ wsl.rs             Shared WSL command execution utility
 - Input read timeout 5ms; output refresh 100ms (static lightbar + mute LED)
 - Mic mute: Windows Core Audio COM API (`IAudioEndpointVolume`)
 
+---
+
+## Linux (Ubuntu/Arch)
+
+The same daemon runs natively on Linux — Ubuntu 22.04+ and Arch — with the
+full shortcut-mapper feature set over USB **and** Bluetooth.
+
+### Requirements
+
+- Ubuntu 22.04+ or Arch Linux
+- DualSense or DualShock 4 controller (USB or Bluetooth)
+- Group membership in `uinput` + `input` (the installer sets this up)
+- **Optional:** `tmux` — enables tmux keybind auto-detection (native, no WSL)
+- **Optional:** `pactl` (PipeWire/PulseAudio) or `wpctl` — system mic toggle
+
+### Quick install
+
+```bash
+cargo build --release
+packaging/linux/install.sh
+```
+
+The installer (`packaging/linux/install.sh`, POSIX sh) detects `apt` vs
+`pacman`, installs runtime deps (`libudev1`/`systemd-libs`, `tar`, `tmux`),
+creates the `uinput` group, adds you to `uinput`+`input`, installs the udev
+rule, copies the binary to `~/.local/bin/ds4cc`, and enables the
+`systemd --user` unit (falls back to XDG autostart when `systemctl --user`
+is unavailable). **Log out and back in afterwards** — group membership only
+applies to new sessions.
+
+### Permissions / udev
+
+`packaging/linux/99-ds4cc.rules` grants:
+
+- **hidraw access** to Sony controllers (VID `054c`: DS4 v1/v2, DualSense,
+  DualSense Edge) for the `input` group + active session (`uaccess`)
+- **/dev/uinput** access for the `uinput` group (virtual keyboard/mouse the
+  daemon injects keystrokes through)
+
+If injection fails, the daemon logs the exact remediation
+(`modprobe uinput`, udev rule, group membership, re-login) and keeps running
+in a feature-degraded mode — it never panics.
+
+### Bluetooth pairing
+
+1. Hold **PS + Share** until the light bar flashes rapidly (pairing mode)
+2. Pair "Wireless Controller" from your desktop's Bluetooth settings
+
+USB works out of the box and takes priority; Bluetooth is the automatic
+fallback, exactly like on Windows.
+
+### Tray icon
+
+The tray is a StatusNotifierItem (ksni):
+
+- **KDE Plasma** — works natively
+- **GNOME** — install the *AppIndicator and KStatusNotifierItem Support*
+  extension, otherwise no icon is shown (the daemon still runs headless)
+
+Menu: *Open voice app* (only when `[voice] app_command` is set in
+`~/.config/ds4cc/config.toml`), *Restart*, *Check for Update*,
+*Enable auto start-up*, *Mouse: Left Stick*, *Open log file*, *Exit*.
+Self-update replaces the running binary atomically from the
+`ds4cc-linux-x86_64.tar.gz` release asset; releases without a Linux asset
+are reported as "no update available".
+
+CLI flags: `--help`, `--version`, `--verbose`, `--no-tray` (the tray is also
+auto-skipped when no D-Bus session bus is reachable).
+
+### Codex runtime is Windows-only
+
+The optional OmegaG Codex controller runtime (`[codex_micro]`) remains a
+Windows feature. The config section still parses on Linux (defaults apply),
+but if `enabled = true` the daemon logs a warning and ignores it.
+
+### Feature parity
+
+| Feature | Windows | Linux |
+|---|:---:|:---:|
+| Button → key combo mapping | ✓ | ✓ (evdev/uinput) |
+| D-pad hold-repeat, chords, admission limits | ✓ | ✓ |
+| Mouse via touchpad / left stick, scroll | ✓ | ✓ |
+| tmux keybind auto-detect | ✓ (via WSL) | ✓ (native) |
+| Claude Code keybindings detect | ✓ | ✓ (native) |
+| Launcher actions (`launcher:<name>`) | ✓ | ✓ |
+| Mic toggle (DualSense mute button) | ✓ (Core Audio) | ✓ (`pactl`/`wpctl`) |
+| Tray menu parity | ✓ | ✓ (ksni; "Open voice app" replaces Wispr) |
+| Auto-start toggle | ✓ (registry) | ✓ (systemd --user / XDG autostart) |
+| Self-update | ✓ (installer) | ✓ (tarball, atomic replace) |
+| USB priority + BT fallback reconnect | ✓ | ✓ |
+| Codex controller runtime | ✓ | ✗ (Windows-only) |
+| Wispr Flow integration | ✓ | via `[voice] app_command` |
+
+Config on Linux: `~/.config/ds4cc/config.toml` — same schema as Windows,
+plus the optional:
+
+```toml
+[voice]
+app_command = ""   # e.g. "wispr-flow" — adds "Open voice app" to the tray
+```
+
 ## License
 
 MIT
