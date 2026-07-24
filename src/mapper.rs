@@ -1,4 +1,10 @@
-/// Button mapper: translates UnifiedInput → keyboard/mouse events via SendInput.
+/// Button mapper: translates UnifiedInput → keyboard/mouse events.
+///
+/// All OS input injection is routed through the [`crate::platform::Injector`]
+/// trait: on Windows a [`WinInjector`] wraps the original `SendInput` logic
+/// (behavior-identical), on Linux C1's evdev/uinput injector is used. Pure
+/// mapping logic (button → action resolution, repeat timing, stick math) is
+/// platform-neutral and shared.
 ///
 /// Fixed mappings (always active, not user-configurable):
 ///   D-pad Up/Down/Left/Right → Arrow keys (two-frame confirm + repeat)
@@ -16,12 +22,15 @@
 /// new-window, Cross → Enter, Circle → Escape, Triangle → Tab, L3 → Ctrl+T,
 /// R3 → Ctrl+U.
 ///
-/// Combos are sent atomically in a single SendInput call.
+/// Combos are delivered atomically by the platform injector (a single
+/// `SendInput` batch on Windows; one uinput event burst + SYN on Linux).
 use crate::config::{ButtonsConfig, LauncherAction, TmuxConfig};
 use crate::detect::Detected;
 use crate::input::{ButtonState, DPad, UnifiedInput};
+use crate::keys::Key;
+use crate::platform::Injector;
 use std::sync::{
-    Arc,
+    Arc, Mutex, OnceLock,
     atomic::{AtomicBool, Ordering},
 };
 use std::time::Instant;
@@ -38,8 +47,7 @@ pub const ENTER_DELAY_MS: u64 = 16;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
     INPUT, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE,
     MOUSEEVENTF_HWHEEL, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MOVE,
-    MOUSEEVENTF_WHEEL, MOUSEINPUT, SendInput, VK_CONTROL, VK_DOWN, VK_ESCAPE, VK_LEFT, VK_MENU,
-    VK_RETURN, VK_RIGHT, VK_SHIFT, VK_TAB, VK_UP,
+    MOUSEEVENTF_WHEEL, MOUSEINPUT, SendInput, VK_SHIFT,
 };
 
 /// Virtual key codes we use.
@@ -120,85 +128,6 @@ pub enum VKey {
     F10,
     F11,
     F12,
-}
-
-#[cfg(windows)]
-impl VKey {
-    fn code(self) -> u16 {
-        match self {
-            VKey::Return => VK_RETURN,
-            VKey::Escape => VK_ESCAPE,
-            VKey::Tab => VK_TAB,
-            VKey::Up => VK_UP,
-            VKey::Down => VK_DOWN,
-            VKey::Left => VK_LEFT,
-            VKey::Right => VK_RIGHT,
-            VKey::Alt => VK_MENU,
-            VKey::Shift => VK_SHIFT,
-            VKey::Control => VK_CONTROL,
-            VKey::Win => 0x5B, // VK_LWIN
-            VKey::A => 0x41,
-            VKey::B => 0x42,
-            VKey::C => 0x43,
-            VKey::D => 0x44,
-            VKey::E => 0x45,
-            VKey::F => 0x46,
-            VKey::G => 0x47,
-            VKey::H => 0x48,
-            VKey::I => 0x49,
-            VKey::J => 0x4A,
-            VKey::K => 0x4B,
-            VKey::L => 0x4C,
-            VKey::M => 0x4D,
-            VKey::N => 0x4E,
-            VKey::O => 0x4F,
-            VKey::P => 0x50,
-            VKey::Q => 0x51,
-            VKey::R => 0x52,
-            VKey::S => 0x53,
-            VKey::T => 0x54,
-            VKey::U => 0x55,
-            VKey::V => 0x56,
-            VKey::W => 0x57,
-            VKey::X => 0x58,
-            VKey::Y => 0x59,
-            VKey::Z => 0x5A,
-            VKey::D0 => 0x30,
-            VKey::D1 => 0x31,
-            VKey::D2 => 0x32,
-            VKey::D3 => 0x33,
-            VKey::D4 => 0x34,
-            VKey::D5 => 0x35,
-            VKey::D6 => 0x36,
-            VKey::D7 => 0x37,
-            VKey::D8 => 0x38,
-            VKey::D9 => 0x39,
-            VKey::Semicolon => 0xBA,    // VK_OEM_1
-            VKey::LeftBracket => 0xDB,  // VK_OEM_4
-            VKey::RightBracket => 0xDD, // VK_OEM_6
-            VKey::Backslash => 0xDC,    // VK_OEM_5
-            VKey::Quote => 0xDE,        // VK_OEM_7
-            VKey::Slash => 0xBF,        // VK_OEM_2
-            VKey::Minus => 0xBD,        // VK_OEM_MINUS
-            VKey::Equals => 0xBB,       // VK_OEM_PLUS (unshifted =)
-            VKey::Comma => 0xBC,        // VK_OEM_COMMA
-            VKey::Period => 0xBE,       // VK_OEM_PERIOD
-            VKey::Backtick => 0xC0,     // VK_OEM_3
-            VKey::Space => 0x20,        // VK_SPACE
-            VKey::F1 => 0x70,
-            VKey::F2 => 0x71,
-            VKey::F3 => 0x72,
-            VKey::F4 => 0x73,
-            VKey::F5 => 0x74,
-            VKey::F6 => 0x75,
-            VKey::F7 => 0x76,
-            VKey::F8 => 0x77,
-            VKey::F9 => 0x78,
-            VKey::F10 => 0x79,
-            VKey::F11 => 0x7A,
-            VKey::F12 => 0x7B,
-        }
-    }
 }
 
 impl VKey {
@@ -842,27 +771,14 @@ impl MapperState {
     }
 }
 
-// ── Windows SendInput functions ──────────────────────────────────────
+// ── Windows injector: platform::Injector over the original SendInput logic ──
 
-/// Send a key combo via Windows SendInput. Modifiers held, main key pressed+released, modifiers released.
+/// Submit one atomic SendInput batch (shared by every WinInjector method).
 #[cfg(windows)]
-pub fn send_key_combo(keys: &[VKey]) {
-    if keys.is_empty() {
+fn send_inputs(inputs: &[INPUT]) {
+    if inputs.is_empty() {
         return;
     }
-
-    let (modifiers, main_key) = keys.split_at(keys.len() - 1);
-    let mut inputs: Vec<INPUT> = Vec::with_capacity(keys.len() * 2);
-
-    for &m in modifiers {
-        inputs.push(make_key_input(m.code(), 0));
-    }
-    inputs.push(make_key_input(main_key[0].code(), 0));
-    inputs.push(make_key_input(main_key[0].code(), KEYEVENTF_KEYUP));
-    for &m in modifiers.iter().rev() {
-        inputs.push(make_key_input(m.code(), KEYEVENTF_KEYUP));
-    }
-
     unsafe {
         SendInput(
             inputs.len() as u32,
@@ -872,50 +788,95 @@ pub fn send_key_combo(keys: &[VKey]) {
     }
 }
 
-/// Press keys down (hold). Call send_key_up to release.
+/// Lower a portable [`Key`] to a Windows VK code plus whether Shift must be
+/// held for it (e.g. a shifted character like '&' → VK_7 + Shift).
 #[cfg(windows)]
-pub fn send_key_down(keys: &[VKey]) {
-    if keys.is_empty() {
-        return;
-    }
-    let inputs: Vec<INPUT> = keys.iter().map(|k| make_key_input(k.code(), 0)).collect();
-    unsafe {
-        SendInput(
-            inputs.len() as u32,
-            inputs.as_ptr(),
-            std::mem::size_of::<INPUT>() as i32,
-        );
-    }
+fn lower_vk(key: Key) -> (u16, bool) {
+    let (vk, shift) = key.to_win_vk();
+    (vk, shift.is_some())
 }
 
-/// Release held keys (reverse order for proper modifier release).
+/// Windows [`Injector`] wrapping the exact SendInput behavior this mapper has
+/// always had. Constructed directly by [`injector`] on Windows (no uinput
+/// involved); also re-exportable by `platform::win_impl` if desired.
 #[cfg(windows)]
-pub fn send_key_up(keys: &[VKey]) {
-    if keys.is_empty() {
-        return;
-    }
-    let inputs: Vec<INPUT> = keys
-        .iter()
-        .rev()
-        .map(|k| make_key_input(k.code(), KEYEVENTF_KEYUP))
-        .collect();
-    unsafe {
-        SendInput(
-            inputs.len() as u32,
-            inputs.as_ptr(),
-            std::mem::size_of::<INPUT>() as i32,
-        );
-    }
-}
+pub struct WinInjector;
 
-/// Send a sequence of key combos with a delay between each (e.g., tmux prefix + action).
 #[cfg(windows)]
-pub fn send_key_sequence(combos: &[Vec<VKey>], delay_ms: u64) {
-    for (i, combo) in combos.iter().enumerate() {
-        send_key_combo(combo);
-        if i < combos.len() - 1 {
-            std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+impl Injector for WinInjector {
+    /// Press every key in order, release in reverse — for `[modifiers…, main]`
+    /// this is exactly the legacy `send_key_combo`: modifiers held, main key
+    /// pressed+released, modifiers released. All events go out in one atomic
+    /// SendInput batch, as before.
+    fn combo(&mut self, keys: &[Key]) {
+        if keys.is_empty() {
+            return;
         }
+        let mut inputs: Vec<INPUT> = Vec::with_capacity(keys.len() * 2 + 2);
+        for &k in keys {
+            let (vk, shifted) = lower_vk(k);
+            if shifted {
+                inputs.push(make_key_input(VK_SHIFT, 0));
+            }
+            inputs.push(make_key_input(vk, 0));
+        }
+        for &k in keys.iter().rev() {
+            let (vk, shifted) = lower_vk(k);
+            inputs.push(make_key_input(vk, KEYEVENTF_KEYUP));
+            if shifted {
+                inputs.push(make_key_input(VK_SHIFT, KEYEVENTF_KEYUP));
+            }
+        }
+        send_inputs(&inputs);
+    }
+
+    /// Press a key down (hold). Pair with [`Injector::key_up`] to release.
+    fn key_down(&mut self, k: Key) {
+        let (vk, shifted) = lower_vk(k);
+        let mut inputs: Vec<INPUT> = Vec::with_capacity(2);
+        if shifted {
+            inputs.push(make_key_input(VK_SHIFT, 0));
+        }
+        inputs.push(make_key_input(vk, 0));
+        send_inputs(&inputs);
+    }
+
+    fn key_up(&mut self, k: Key) {
+        let (vk, shifted) = lower_vk(k);
+        let mut inputs: Vec<INPUT> = Vec::with_capacity(2);
+        inputs.push(make_key_input(vk, KEYEVENTF_KEYUP));
+        if shifted {
+            inputs.push(make_key_input(VK_SHIFT, KEYEVENTF_KEYUP));
+        }
+        send_inputs(&inputs);
+    }
+
+    /// Move the mouse cursor by a relative offset.
+    fn mouse_rel(&mut self, dx: i32, dy: i32) {
+        let input = make_mouse_move_input(dx, dy);
+        send_inputs(&[input]);
+    }
+
+    /// Scroll. `vertical`: positive = up; `horizontal`: positive = right
+    /// (mapper's wheel-delta convention, unchanged).
+    fn wheel(&mut self, vertical: i32, horizontal: i32) {
+        let mut inputs: Vec<INPUT> = Vec::new();
+        if vertical != 0 {
+            inputs.push(make_mouse_input(MOUSEEVENTF_WHEEL, vertical));
+        }
+        if horizontal != 0 {
+            inputs.push(make_mouse_input(MOUSEEVENTF_HWHEEL, horizontal));
+        }
+        send_inputs(&inputs);
+    }
+
+    /// Left mouse button click (down + up).
+    fn click(&mut self) {
+        let inputs = [
+            make_mouse_flag_input(MOUSEEVENTF_LEFTDOWN),
+            make_mouse_flag_input(MOUSEEVENTF_LEFTUP),
+        ];
+        send_inputs(&inputs);
     }
 }
 
@@ -958,54 +919,6 @@ pub fn send_launcher_text(text: &str, submit_enter: bool) {
             SendInput(
                 enter.len() as u32,
                 enter.as_ptr(),
-                std::mem::size_of::<INPUT>() as i32,
-            );
-        }
-    }
-}
-
-/// Move the mouse cursor by a relative offset via Windows SendInput.
-#[cfg(windows)]
-pub fn send_mouse_move(dx: i32, dy: i32) {
-    let input = make_mouse_move_input(dx, dy);
-    unsafe {
-        SendInput(1, &input, std::mem::size_of::<INPUT>() as i32);
-    }
-}
-
-/// Send a left mouse button click (down + up) via Windows SendInput.
-#[cfg(windows)]
-pub fn send_mouse_click() {
-    let inputs = [
-        make_mouse_flag_input(MOUSEEVENTF_LEFTDOWN),
-        make_mouse_flag_input(MOUSEEVENTF_LEFTUP),
-    ];
-    unsafe {
-        SendInput(
-            inputs.len() as u32,
-            inputs.as_ptr(),
-            std::mem::size_of::<INPUT>() as i32,
-        );
-    }
-}
-
-/// Send a mouse scroll event via Windows SendInput.
-#[cfg(windows)]
-pub fn send_scroll(horizontal: i32, vertical: i32) {
-    let mut inputs: Vec<INPUT> = Vec::new();
-
-    if vertical != 0 {
-        inputs.push(make_mouse_input(MOUSEEVENTF_WHEEL, vertical));
-    }
-    if horizontal != 0 {
-        inputs.push(make_mouse_input(MOUSEEVENTF_HWHEEL, horizontal));
-    }
-
-    if !inputs.is_empty() {
-        unsafe {
-            SendInput(
-                inputs.len() as u32,
-                inputs.as_ptr(),
                 std::mem::size_of::<INPUT>() as i32,
             );
         }
@@ -1097,20 +1010,209 @@ fn make_mouse_flag_input(flags: u32) -> INPUT {
     }
 }
 
-/// Execute an action (send keystrokes, scroll, or mouse movement/click).
+// ── Injector plumbing (shared) ───────────────────────────────────────
+
+/// Process-wide injector, created lazily on first use.
+///
+/// Windows: [`WinInjector`] over the original SendInput code — always
+/// available, behavior-identical to the pre-port mapper.
+/// Linux: C1's evdev/uinput injector via [`crate::platform::new_injector`];
+/// if /dev/uinput is unavailable the daemon keeps running with a logged
+/// no-op injector (feature-degraded, never fatal — SPEC §4).
+static INJECTOR: OnceLock<Mutex<Box<dyn Injector>>> = OnceLock::new();
+
+fn injector() -> &'static Mutex<Box<dyn Injector>> {
+    INJECTOR.get_or_init(|| Mutex::new(create_injector()))
+}
+
+/// Eagerly create the process-wide injector at startup so permission errors
+/// (and their remediation logs) surface immediately instead of on first key.
+/// Never fails: on error the injector is a logged no-op (SPEC §4).
+pub fn init_injector() {
+    let _ = injector();
+}
+
 #[cfg(windows)]
+fn create_injector() -> Box<dyn Injector> {
+    Box::new(WinInjector)
+}
+
+#[cfg(not(windows))]
+fn create_injector() -> Box<dyn Injector> {
+    match crate::platform::new_injector() {
+        Ok(inj) => inj,
+        Err(e) => {
+            log::error!("input injection unavailable: {e}");
+            #[cfg(target_os = "linux")]
+            log::error!(
+                "remediation: modprobe uinput; install packaging/linux/99-ds4cc.rules; \
+                 add user to uinput group; re-login"
+            );
+            Box::new(NullInjector)
+        }
+    }
+}
+
+/// No-op injector used when the platform injector cannot be created.
+/// Every call is a logged no-op so the daemon keeps running (and keeps
+/// reading the controller) even without injection permissions.
+#[cfg(not(windows))]
+struct NullInjector;
+
+#[cfg(not(windows))]
+impl Injector for NullInjector {
+    fn combo(&mut self, keys: &[Key]) {
+        log::debug!("injector unavailable; dropping {}-key combo", keys.len());
+    }
+    fn key_down(&mut self, _k: Key) {
+        log::debug!("injector unavailable; dropping key_down");
+    }
+    fn key_up(&mut self, _k: Key) {
+        log::debug!("injector unavailable; dropping key_up");
+    }
+    fn mouse_rel(&mut self, _dx: i32, _dy: i32) {
+        log::trace!("injector unavailable; dropping mouse move");
+    }
+    fn wheel(&mut self, _vertical: i32, _horizontal: i32) {
+        log::trace!("injector unavailable; dropping scroll");
+    }
+    fn click(&mut self) {
+        log::debug!("injector unavailable; dropping mouse click");
+    }
+}
+
+/// Lower a mapper [`VKey`] to the portable [`Key`] used by the platform
+/// injector. Pure and total (every VKey variant has a Key counterpart).
+/// Letters/digits/punct lower to their unshifted `Char` form — shifted
+/// semantics stay carried by an explicit `VKey::Shift` in the combo, exactly
+/// as the Windows path has always worked (e.g. "kill-window" = Shift+7 → '&').
+pub fn to_key(v: VKey) -> Key {
+    match v {
+        VKey::Return => Key::Enter,
+        VKey::Escape => Key::Escape,
+        VKey::Tab => Key::Tab,
+        VKey::Up => Key::Up,
+        VKey::Down => Key::Down,
+        VKey::Left => Key::Left,
+        VKey::Right => Key::Right,
+        VKey::Alt => Key::Alt,
+        VKey::Shift => Key::Shift,
+        VKey::Control => Key::Ctrl,
+        VKey::Win => Key::Super,
+        VKey::Space => Key::Space,
+        VKey::A => Key::Char('a'),
+        VKey::B => Key::Char('b'),
+        VKey::C => Key::Char('c'),
+        VKey::D => Key::Char('d'),
+        VKey::E => Key::Char('e'),
+        VKey::F => Key::Char('f'),
+        VKey::G => Key::Char('g'),
+        VKey::H => Key::Char('h'),
+        VKey::I => Key::Char('i'),
+        VKey::J => Key::Char('j'),
+        VKey::K => Key::Char('k'),
+        VKey::L => Key::Char('l'),
+        VKey::M => Key::Char('m'),
+        VKey::N => Key::Char('n'),
+        VKey::O => Key::Char('o'),
+        VKey::P => Key::Char('p'),
+        VKey::Q => Key::Char('q'),
+        VKey::R => Key::Char('r'),
+        VKey::S => Key::Char('s'),
+        VKey::T => Key::Char('t'),
+        VKey::U => Key::Char('u'),
+        VKey::V => Key::Char('v'),
+        VKey::W => Key::Char('w'),
+        VKey::X => Key::Char('x'),
+        VKey::Y => Key::Char('y'),
+        VKey::Z => Key::Char('z'),
+        VKey::D0 => Key::Char('0'),
+        VKey::D1 => Key::Char('1'),
+        VKey::D2 => Key::Char('2'),
+        VKey::D3 => Key::Char('3'),
+        VKey::D4 => Key::Char('4'),
+        VKey::D5 => Key::Char('5'),
+        VKey::D6 => Key::Char('6'),
+        VKey::D7 => Key::Char('7'),
+        VKey::D8 => Key::Char('8'),
+        VKey::D9 => Key::Char('9'),
+        VKey::Semicolon => Key::Char(';'),
+        VKey::LeftBracket => Key::Char('['),
+        VKey::RightBracket => Key::Char(']'),
+        VKey::Backslash => Key::Char('\\'),
+        VKey::Quote => Key::Char('\''),
+        VKey::Slash => Key::Char('/'),
+        VKey::Minus => Key::Char('-'),
+        VKey::Equals => Key::Char('='),
+        VKey::Comma => Key::Char(','),
+        VKey::Period => Key::Char('.'),
+        VKey::Backtick => Key::Char('`'),
+        VKey::F1 => Key::F(1),
+        VKey::F2 => Key::F(2),
+        VKey::F3 => Key::F(3),
+        VKey::F4 => Key::F(4),
+        VKey::F5 => Key::F(5),
+        VKey::F6 => Key::F(6),
+        VKey::F7 => Key::F(7),
+        VKey::F8 => Key::F(8),
+        VKey::F9 => Key::F(9),
+        VKey::F10 => Key::F(10),
+        VKey::F11 => Key::F(11),
+        VKey::F12 => Key::F(12),
+    }
+}
+
+fn to_keys(keys: &[VKey]) -> Vec<Key> {
+    keys.iter().map(|&v| to_key(v)).collect()
+}
+
+/// Execute an action (send keystrokes, scroll, or mouse movement/click).
+///
+/// All key/mouse actions go through the shared [`Injector`] trait object.
+/// `LauncherText` (arbitrary Unicode) is not representable in the Injector
+/// trait surface, so it keeps its platform-specific text path: SendInput
+/// KEYEVENTF_UNICODE on Windows, wtype/xdotool on Linux.
 pub fn execute_action(action: &Action) {
     match action {
-        Action::KeyCombo(keys) => send_key_combo(keys),
-        Action::KeyDown(keys) => send_key_down(keys),
-        Action::KeyUp(keys) => send_key_up(keys),
-        Action::KeySequence(combos) => send_key_sequence(combos, 10),
+        Action::KeyCombo(keys) => {
+            let keys = to_keys(keys);
+            injector().lock().expect("injector poisoned").combo(&keys);
+        }
+        Action::KeyDown(keys) => {
+            let mut inj = injector().lock().expect("injector poisoned");
+            for &v in keys {
+                inj.key_down(to_key(v));
+            }
+        }
+        // Release in reverse order for proper modifier release (legacy behavior).
+        Action::KeyUp(keys) => {
+            let mut inj = injector().lock().expect("injector poisoned");
+            for &v in keys.iter().rev() {
+                inj.key_up(to_key(v));
+            }
+        }
+        // Chord sequence (e.g. tmux prefix + action key): combo, 10 ms, combo.
+        Action::KeySequence(combos) => {
+            for (i, combo) in combos.iter().enumerate() {
+                let keys = to_keys(combo);
+                injector().lock().expect("injector poisoned").combo(&keys);
+                if i < combos.len() - 1 {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+            }
+        }
         Action::Scroll {
             horizontal,
             vertical,
-        } => send_scroll(*horizontal, *vertical),
-        Action::MouseMove { dx, dy } => send_mouse_move(*dx, *dy),
-        Action::MouseClick => send_mouse_click(),
+        } => injector()
+            .lock()
+            .expect("injector poisoned")
+            .wheel(*vertical, *horizontal),
+        Action::MouseMove { dx, dy } => injector()
+            .lock()
+            .expect("injector poisoned")
+            .mouse_rel(*dx, *dy),
+        Action::MouseClick => injector().lock().expect("injector poisoned").click(),
         Action::LauncherText { text, enter } => send_launcher_text(text, *enter),
     }
 }
@@ -1260,31 +1362,9 @@ pub fn send_launcher_text(text: &str, submit_enter: bool) {
     }
 }
 
-/// Execute an action — no-op stub on non-Windows/non-Linux platforms.
-/// Destructures all variants so Action fields are considered "read" on every
-/// platform, silencing the dead_code lint without any suppression attribute.
-#[cfg(not(windows))]
-pub fn execute_action(action: &Action) {
-    match action {
-        Action::KeyCombo(_keys) => {}
-        Action::KeyDown(_keys) => {}
-        Action::KeyUp(_keys) => {}
-        Action::KeySequence(_combos) => {}
-        Action::Scroll {
-            horizontal: _h,
-            vertical: _v,
-        } => {}
-        Action::MouseMove { dx: _dx, dy: _dy } => {}
-        Action::MouseClick => {}
-        #[cfg(target_os = "linux")]
-        Action::LauncherText { text, enter } => send_launcher_text(text, *enter),
-        #[cfg(not(target_os = "linux"))]
-        Action::LauncherText {
-            text: _text,
-            enter: _enter,
-        } => {}
-    }
-}
+/// Text-injection stub for platforms with no launcher-text backend.
+#[cfg(not(any(windows, target_os = "linux")))]
+pub fn send_launcher_text(_text: &str, _submit_enter: bool) {}
 
 // ── Linux injection backend tests ─────────────────────────────────────
 //
@@ -2236,5 +2316,78 @@ mod tests {
         assert_eq!(VKey::from_name("["), Some(VKey::LeftBracket));
         assert_eq!(VKey::from_name("z"), Some(VKey::Z));
         assert_eq!(VKey::from_name("unknown"), None);
+    }
+
+    // ── VKey → portable Key lowering (feeds the platform Injector) ────
+
+    #[test]
+    fn to_key_maps_modifiers_and_named_keys() {
+        assert_eq!(to_key(VKey::Control), Key::Ctrl);
+        assert_eq!(to_key(VKey::Alt), Key::Alt);
+        assert_eq!(to_key(VKey::Shift), Key::Shift);
+        assert_eq!(to_key(VKey::Win), Key::Super);
+        assert_eq!(to_key(VKey::Return), Key::Enter);
+        assert_eq!(to_key(VKey::Escape), Key::Escape);
+        assert_eq!(to_key(VKey::Tab), Key::Tab);
+        assert_eq!(to_key(VKey::Space), Key::Space);
+        assert_eq!(to_key(VKey::Up), Key::Up);
+        assert_eq!(to_key(VKey::Down), Key::Down);
+        assert_eq!(to_key(VKey::Left), Key::Left);
+        assert_eq!(to_key(VKey::Right), Key::Right);
+    }
+
+    #[test]
+    fn to_key_maps_letters_digits_punct_to_unshifted_chars() {
+        assert_eq!(to_key(VKey::A), Key::Char('a'));
+        assert_eq!(to_key(VKey::Z), Key::Char('z'));
+        assert_eq!(to_key(VKey::D0), Key::Char('0'));
+        assert_eq!(to_key(VKey::D7), Key::Char('7'));
+        assert_eq!(to_key(VKey::Semicolon), Key::Char(';'));
+        assert_eq!(to_key(VKey::LeftBracket), Key::Char('['));
+        assert_eq!(to_key(VKey::RightBracket), Key::Char(']'));
+        assert_eq!(to_key(VKey::Backslash), Key::Char('\\'));
+        assert_eq!(to_key(VKey::Quote), Key::Char('\''));
+        assert_eq!(to_key(VKey::Slash), Key::Char('/'));
+        assert_eq!(to_key(VKey::Minus), Key::Char('-'));
+        assert_eq!(to_key(VKey::Equals), Key::Char('='));
+        assert_eq!(to_key(VKey::Comma), Key::Char(','));
+        assert_eq!(to_key(VKey::Period), Key::Char('.'));
+        assert_eq!(to_key(VKey::Backtick), Key::Char('`'));
+    }
+
+    #[test]
+    fn to_key_maps_function_keys() {
+        assert_eq!(to_key(VKey::F1), Key::F(1));
+        assert_eq!(to_key(VKey::F12), Key::F(12));
+    }
+
+    #[test]
+    fn combo_ctrl_shift_b_lowers_in_order() {
+        let combo = parse_key_combo("ctrl+shift+b").expect("combo parses");
+        let lowered = to_keys(&combo);
+        assert_eq!(lowered, vec![Key::Ctrl, Key::Shift, Key::Char('b')]);
+    }
+
+    #[test]
+    fn shifted_char_combo_keeps_explicit_shift() {
+        // Legacy tmux default "kill-window" = Shift+7 ('&'): the shift must
+        // stay an explicit key so Windows VK and Linux evdev paths agree.
+        let combo = default_key_for_action("kill-window").expect("tmux default");
+        let lowered = to_keys(&combo);
+        assert_eq!(lowered, vec![Key::Shift, Key::Char('7')]);
+    }
+
+    #[test]
+    fn l2_hold_combo_lowers_to_ctrl_super() {
+        // Fixed mapping: L2 hold = Ctrl+Win.
+        let lowered = to_keys(&[VKey::Control, VKey::Win]);
+        assert_eq!(lowered, vec![Key::Ctrl, Key::Super]);
+    }
+
+    #[test]
+    fn tmux_prefix_default_lowers_to_ctrl_b() {
+        // Hardcoded fallback tmux prefix is Ctrl+B on every platform.
+        let lowered = to_keys(&[VKey::Control, VKey::B]);
+        assert_eq!(lowered, vec![Key::Ctrl, Key::Char('b')]);
     }
 }
