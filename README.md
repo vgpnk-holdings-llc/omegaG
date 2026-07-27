@@ -10,6 +10,9 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/Rust-2024_edition-f74c00?logo=rust&logoColor=white" alt="Rust">
+  <img src="https://img.shields.io/badge/Windows-10%2F11-0078D4?logo=windows&logoColor=white" alt="Windows">
+  <img src="https://img.shields.io/badge/Linux-Ubuntu%20%2F%20Arch-FCC624?logo=linux&logoColor=black" alt="Linux">
+  <img src="https://img.shields.io/badge/DualSense%20%2F%20DS4-USB%20%2B%20BT-003791?logo=playstation&logoColor=white" alt="Controllers">
 </p>
 
 ---
@@ -25,10 +28,11 @@ the proven DS4CC shortcut mapper and its simple defaults.
 
 OmegaG is a fork of [VeigaPunk/DS4CC](https://github.com/VeigaPunk/DS4CC).
 It preserves the `ds4cc` package, binary, configuration path, and MIT attribution
-for compatibility. The daemon runs in the Windows tray and lets your controller:
+for compatibility. The daemon runs in the system tray on **Windows and Linux**
+(Ubuntu / Arch, USB **and** Bluetooth) and lets your controller:
 
 - **Send keystrokes** — every button maps to a key combo or chord sequence
-- **Drive tmux** — window navigation on the shoulder buttons, keybinds auto-detected from your running tmux server via WSL
+- **Drive tmux** — window navigation on the shoulder buttons, keybinds auto-detected from your running tmux server (natively on Linux, via WSL on Windows)
 - **Drive Claude Code CLI** — map buttons to Claude Code actions (e.g. `chat:cycleMode`), auto-resolved from `~/.claude/keybindings.json`
 - **Move the mouse** — touchpad swipe or left stick moves the cursor, touchpad press clicks
 - **Scroll** — right stick, vertical + horizontal
@@ -36,7 +40,7 @@ for compatibility. The daemon runs in the Windows tray and lets your controller:
 
 No hooks, no polling, no agent-state tracking, no profiles. It is a shortcut mapper.
 
-An optional **OmegaG Codex controller runtime** provides a testable semantic
+An optional **OmegaG Codex controller runtime** (Windows-only) provides a testable semantic
 engine. Exact ChatGPT desktop parity is impossible through public APIs today.
 The runtime is disabled by default and cannot consume legacy controls unless
 `enabled = true`. It talks only to a supervised local `codex app-server --stdio`.
@@ -45,19 +49,29 @@ The runtime is disabled by default and cannot consume legacy controls unless
 
 ## Quick Start
 
+**Windows**
+
 1. Download **[DS4CC-Setup.exe](https://github.com/VeigaPunk/DS4CC/releases/latest)** and run it
 2. Plug in your controller — done
 
-Keybinds are detected automatically on launch (one WSL round-trip). Everything is configurable via `%APPDATA%\ds4cc\config.toml`, but defaults work out of the box.
+**Linux (Ubuntu / Arch)**
+
+```bash
+cargo build --release
+packaging/linux/install.sh   # then log out and back in
+```
+
+Keybinds are detected automatically on launch (one probe — native on Linux, WSL on Windows). Everything is configurable via `config.toml` (`%APPDATA%\ds4cc` on Windows, `~/.config/ds4cc` on Linux), but defaults work out of the box.
 
 ---
 
 ## How It Works
 
-1. You launch `ds4cc.exe` — the console window is hidden, a tray icon appears
-2. One WSL probe detects your tmux prefix + bindings and your Claude Code keybindings
+1. You launch `ds4cc` — it backgrounds itself and a tray icon appears
+2. One probe detects your tmux prefix + bindings and your Claude Code keybindings
 3. Every configurable button resolves to a key sequence at startup
-4. It connects to your controller via HID and maps input → `SendInput` keystrokes
+4. It connects to your controller via HID and maps input → keystrokes
+   (`SendInput` on Windows, a `uinput` virtual keyboard/mouse on Linux)
 
 ---
 
@@ -102,7 +116,7 @@ A button value can be:
 
 ## Configuration
 
-Config file: `%APPDATA%\ds4cc\config.toml` — all settings optional.
+Config file: `%APPDATA%\ds4cc\config.toml` (Windows) or `~/.config/ds4cc/config.toml` (Linux) — all settings optional.
 
 ```toml
 [buttons]
@@ -114,7 +128,7 @@ share = "chat:cycleMode"    # Claude Code action
 options = "ctrl+shift+b"    # direct combo
 
 [tmux]
-auto_detect = true          # query the running tmux server via WSL
+auto_detect = true          # query the running tmux server (native on Linux, WSL on Windows)
 prefix = "Ctrl+B"           # fallback if auto-detect fails
 
 [scroll]
@@ -136,7 +150,10 @@ r = 255
 g = 140
 b = 0
 
-[codex_micro]
+[voice]                     # Linux: optional voice app for the tray menu
+app_command = ""            # e.g. "wispr-flow" — empty hides the tray item
+
+[codex_micro]               # Windows-only; parsed but ignored on Linux
 enabled = false             # opt in; legacy defaults remain untouched
 codex_executable = "codex"   # PATH name, or an absolute Windows/WSL path
 cwd = ""                     # empty = process working directory
@@ -163,7 +180,12 @@ up = "Summarize progress."
 right = "Run the configured checks."
 ```
 
-## OmegaG Codex controller runtime
+## OmegaG Codex controller runtime (Windows-only)
+
+> **Platform note:** the codex runtime and its session-status lightbar
+> projection are Windows features. On Linux the `[codex_micro]` section is
+> parsed for compatibility but the runtime never starts (a warning is logged
+> if `enabled = true`).
 
 ### Controller layer
 
@@ -255,21 +277,23 @@ lifecycle/status/turn/error upserts, and removals into six slots.
 
 ## Keybind Detection
 
-On launch DS4CC runs a **single WSL command** that fetches:
+On launch DS4CC runs a **single probe** that fetches:
 
 - `tmux show-options -g prefix` — your prefix key
 - `tmux list-keys -T prefix` — the full binding table (falls back to parsing `~/.tmux.conf` when no server is running)
 - `~/.claude/keybindings.json` — Claude Code CLI keybindings
 
-Missing pieces degrade gracefully: no WSL → hardcoded defaults, no tmux → config prefix, no Claude Code → action names fall through to direct-combo parsing.
+On Linux the probe runs natively; on Windows it runs through one WSL command.
+Missing pieces degrade gracefully: no WSL/tmux → hardcoded defaults, no tmux server → config prefix, no Claude Code → action names fall through to direct-combo parsing.
 
 ---
 
-## 🎙️ Controller + Wispr = No Keyboard
+## 🎙️ Controller + Voice = No Keyboard
 
-DS4CC pairs with [Wispr Flow](https://ref.wisprflow.ai/vgpnk):
+DS4CC pairs with [Wispr Flow](https://ref.wisprflow.ai/vgpnk) on Windows
+(configure any voice app on Linux via `[voice] app_command`):
 
-- **Wispr** handles all text input — you talk, it types (L2 is the push-to-talk hold)
+- **Voice** handles all text input — you talk, it types (L2 is the push-to-talk hold)
 - **DS4CC** handles everything else — navigation, tmux, scrolling, Enter/Escape/Tab
 
 Voice dictates. Controller navigates. No keyboard required.
@@ -280,13 +304,15 @@ Voice dictates. Controller navigates. No keyboard required.
 
 | Menu item | What it does |
 |---|---|
-| Open Wispr Flow | Launch Wispr Flow (prompts to download if not found) |
+| Open Wispr Flow | Launch Wispr Flow — on Linux: "Open voice app" when `[voice] app_command` is set |
 | Restart | Restart DS4CC |
-| Check for Update | Self-update from GitHub releases |
-| Enable auto start-up | Toggle Windows startup entry |
+| Check for Update | Self-update from GitHub releases (per-OS asset) |
+| Enable auto start-up | Toggle startup entry (registry on Windows, systemd user / XDG autostart on Linux) |
 | Mouse: Left Stick | Switch cursor control between touchpad and left stick |
-| Show Log Window | Show/hide the console log window |
+| Show Log Window | Show/hide the console log window — on Linux: "Open log file" |
 | Exit | Quit |
+
+On Linux the tray is a StatusNotifierItem (see the Linux section for desktop notes).
 
 ---
 
@@ -301,24 +327,42 @@ USB takes priority; Bluetooth is the automatic fallback. DS4 defaults to stick-m
 
 ## Requirements
 
-- Windows 10 / 11
+- **Windows** 10 / 11, or **Linux**: Ubuntu 22.04+ / Arch
 - DualSense or DualShock 4 controller (USB or Bluetooth)
-- **Optional:** WSL2 — needed for tmux / Claude Code keybind detection
+- **Optional:** WSL2 (Windows) or native `tmux` (Linux) — for tmux / Claude Code keybind detection
+- **Linux only:** group membership in `uinput` + `input` (the installer sets this up); optional `pactl`/`wpctl` for mic toggle
 
 ---
 
 ## Install
 
-### Installer (recommended)
+### Windows — Installer (recommended)
 
 Download **DS4CC-Setup.exe** from [Releases](https://github.com/VeigaPunk/DS4CC/releases) and run it.
 
 - Installs to `%LOCALAPPDATA%\DS4CC` — no admin rights needed
 - Auto-start is **off by default** (opt-in checkbox)
 
+### Linux — install script
+
+```bash
+cargo build --release
+packaging/linux/install.sh
+```
+
+Installs to `~/.local/bin/ds4cc`, sets up udev rules, group membership and a
+`systemd --user` unit (see the Linux section for details). Log out and back in
+afterwards.
+
 ### Build from source
 
-Requires [Rust](https://rustup.rs). From WSL, cross-compile with the GNU toolchain:
+Requires [Rust](https://rustup.rs). Native Linux build:
+
+```bash
+cargo build --release          # binary: target/release/ds4cc
+```
+
+From WSL, cross-compile for Windows with the GNU toolchain:
 
 ```bash
 rustup target add x86_64-pc-windows-gnu
@@ -335,31 +379,43 @@ To build the installer, compile `installer/ds4cc.iss` with [Inno Setup](https://
 ## Architecture
 
 ```
-main.rs            Startup, connection loop, input/output orchestration
-config.rs          TOML config with serde defaults
-detect.rs          Single-probe keybind detection (tmux + Claude Code via WSL)
+main.rs            Startup, connection loop, input/output orchestration, CLI flags
+keys.rs            Portable key model (combo parsing, per-OS lowering)
+platform/          OS backends behind a shared interface
+  linux/inject.rs    uinput virtual keyboard/mouse (evdev)
+  linux/mic.rs       pactl / wpctl microphone toggle
+  linux/autostart.rs systemd user unit + XDG autostart
+  linux/paths.rs     XDG config/state directories
+config.rs          TOML config with serde defaults (same schema on both OSes)
+detect.rs          Single-probe keybind detection (native on Linux, WSL on Windows)
+native_run.rs      Linux process runner (no shell, kill-on-timeout)
 tmux_detect.rs     Pure tmux notation/binding parsers
 controller.rs      VID/PID detection, controller type enums
-hid.rs             HID device discovery, open, read/write
+hid.rs             HID device discovery, open, read/write (hidraw on Linux)
 input.rs           Raw HID report parsing → UnifiedInput
 mapper.rs          Button map resolution + dispatch, d-pad repeat, scroll, mouse
 output.rs          HID output reports (lightbar + player LED + mic LED)
-mic.rs             System microphone toggle via Core Audio COM
-tray.rs            System tray icon + menu
-update.rs          Self-update from GitHub releases
-wsl.rs             Shared WSL command execution utility
+mic.rs             Microphone toggle dispatch (Core Audio COM on Windows)
+tray.rs            Tray dispatch (tray-icon on Windows)
+tray_linux.rs      StatusNotifierItem tray (ksni, pure-Rust D-Bus)
+update.rs          Self-update from GitHub releases (per-OS assets)
+wsl.rs             Shared WSL command execution utility (Windows only)
+codex_*.rs         Optional codex controller runtime (Windows only)
 ```
 
 ## Technical Notes
 
-- Rust 2024 edition, `tokio` async runtime
-- HID via `hidapi` (BT CRC validation, USB-priority reconnect loop)
+- Rust 2024 edition, `tokio` async runtime; one codebase, `cfg`-gated OS backends
+- HID via `hidapi` (BT CRC validation, USB-priority reconnect loop; hidraw backend on Linux)
 - Input read timeout 5ms; output refresh 100ms (static lightbar + mute LED)
-- Mic mute: Windows Core Audio COM API (`IAudioEndpointVolume`)
+- Keystroke/mouse injection: `SendInput` on Windows, `evdev`/`uinput` virtual device on Linux
+- Mic mute: Windows Core Audio COM (`IAudioEndpointVolume`); `pactl`/`wpctl` on Linux
+- Tray: `tray-icon` on Windows, `ksni` (StatusNotifierItem) on Linux
+- 215 unit/integration tests, all hardware-free (mocked tmux, parsers, injectors)
 
 ---
 
-## Linux (Ubuntu/Arch)
+## Linux details (Ubuntu/Arch)
 
 The same daemon runs natively on Linux — Ubuntu 22.04+ and Arch — with the
 full shortcut-mapper feature set over USB **and** Bluetooth.
