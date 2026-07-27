@@ -6,8 +6,9 @@
 
 ## Provenance
 
-- Corrected synthesis: `.xbreed/mailbox/events.ndjson`, discovery from `cdx-distiller-xsnapshot-r1-corrected`; it supersedes synthesis `50187468a99f73c5ca5046dfbb064d922229fcd883a4d7d05d24c7774215aefe`.
-- Audit hash: `cd55d7f0cbc382381912856dd70453bf15059d12f621a16831ba8e464302380b`.
+- Corrected synthesis: discovery from `cdx-distiller-xsnapshot-r1-corrected`; it superseded synthesis hash `50187468a99f73c5ca5046dfbb064d922229fcd883a4d7d05d24c7774215aefe`. That legacy hash is retained for audit history and is not the final audit hash.
+- Audit-hash history (append-only): `cd55d7f0cbc382381912856dd70453bf15059d12f621a16831ba8e464302380b` was recorded without its route/source prefix and is **invalid / SPOOF_SUSPECT**; the proposed literal prefix repair `cdx-cd55d7f0cbc382381912856dd70453bf15059d12f621a16831ba8e464302380b` is retained as an intermediate source-prefix correction but is also **invalid / SPOOF_SUSPECT** because the canonical audit record required recomputation rather than string prefixing.
+- Final corrected Round 1 audit hash after source-prefix correction and canonical recomputation: `4e2ca00d0779614175396e0411300671001a2a27161db4ceb9ec4a28959d0e10`.
 - Archive hash (ZIP SHA-256): `1d9e3c7ba894d4328b4ce4f6fc85b60a97a0f2cb85b3f810f018bd3e3afdf6d1`.
 - The corrected synthesis withholds its teammate source map. Therefore this report attributes its rows to the corrected distiller rather than inventing individual teammate identities.
 - xask targets: none. This documentation axis had no xask gate.
