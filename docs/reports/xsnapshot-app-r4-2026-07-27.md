@@ -43,7 +43,7 @@ The final two-file correction replaces the ambiguous claim that “touchpad swip
 
 ## Archive availability, integrity, and safe entries
 
-The source ZIP is not tracked in or located beneath the omegaG checkout, but it is locally available at `/home/vhpnk/Downloads/Kimi_Agent_omegaG DualSense Clone.zip`. Its SHA-256 is `1d9e3c7ba894d4328b4ce4f6fc85b60a97a0f2cb85b3f810f018bd3e3afdf6d1`; `unzip -t` passes. The exact eight entries are:
+The supplied external archive is not tracked in or located beneath the omegaG checkout. Its SHA-256 is `1d9e3c7ba894d4328b4ce4f6fc85b60a97a0f2cb85b3f810f018bd3e3afdf6d1`; `unzip -t` passes. The exact eight entries are:
 
 1. `app/index.html`
 2. `app/main.js`
@@ -83,7 +83,7 @@ SHA-256 of those exact UTF-8 bytes is `a25ad649f50eb1bee0e14f683581b56942bffac39
 
 ## Reviewer corrections and historical supersession
 
-- **`R2S-001` revised:** any broad archive-absence characterization is partly contradicted. The ZIP exists outside the checkout at the exact Downloads path above and passes hash, integrity, and containment checks. R3's line 29 remains accurate only in its narrow statement that the ZIP is not present in the checkout.
+- **`R2S-001` revised:** any broad archive-absence characterization is partly contradicted. The supplied external archive exists outside the checkout and passes hash, integrity, and containment checks. R3's line 29 remains accurate only in its narrow statement that the ZIP is not present in the checkout.
 - **`R2S-007` rejected:** Round 1 records `4e2ca00d0779614175396e0411300671001a2a27161db4ceb9ec4a28959d0e10`, and R3 records `cffccc96b63b7cb0ecbada7c658074250a6a88402e270fc99625a18b189c1cdb`, as historical synthesis claims. The historical Round-1/R3 hash lacks a retained valid SOURCE_MAP and exact preimage, so it is unverified, not independently reproducible, and not canonical. R4 explicitly supersedes R3's source-authentication characterization while preserving R1–R3 unchanged. This is an attestation/schema defect, not evidence of content fraud.
 
 ## Verification gates
@@ -99,7 +99,7 @@ SHA-256 of those exact UTF-8 bytes is `a25ad649f50eb1bee0e14f683581b56942bffac39
 
 | Move ID | Final verdict | Disposition |
 |---|---|---|
-| `R2S-001_PROVENANCE_SCOPE` | **KEEP / REVISED** | Preserve exact local path, hash, safe-entry audit, and unauthenticated-producer boundary. |
+| `R2S-001_PROVENANCE_SCOPE` | **KEEP / REVISED** | Preserve the archive hash, safe-entry audit, and unauthenticated-producer boundary without recording a workstation path. |
 | `R2S-002_CONTROLLER_COPY_GUARD` | **KEEP / CLOSED** | Corrected DS4/DualSense claims and deterministic guards are ready to integrate. |
 | `R2S-003_BROWSER_STATE` | **KEEP / VERIFIED** | Final desktop/mobile interaction and 0/0/0 browser evidence pass. |
 | `R2S-004_STATIC_RUST_BOUNDARY` | **KEEP / VERIFIED** | Static scope is preserved and Rust remains 215/215. |

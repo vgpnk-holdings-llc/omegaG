@@ -30,17 +30,24 @@ assert.match(html, /<b>Left stick \/ DualSense touchpad swipe<\/b>mouse cursor/)
 assert.match(html, /<b>Touchpad press<\/b>left-click on DualSense and DS4/);
 assert.match(html, /optional Windows-only Codex runtime enabled/);
 assert.match(html, /website illustration[\s\S]*not a live controller or HID connection/);
-assert.match(html, /hero-journey\.png"[^>]*width="1720" height="968"/);
+assert.doesNotMatch(html, /hero-journey\.png|Claude DS4\/5/i);
+assert.match(html, /<meta property="og:image" content="assets\/controller-mark\.png">/);
+assert.match(html, /class="hero-visual" role="img" aria-label="omegaG controller shortcut interface"/);
+assert.match(html, /class="hero-mark" width="128" height="128" alt=""/);
 assert.match(html, /masterpiece\.png"[^>]*width="2720" height="1190"[^>]*loading="lazy"/);
 assert.match(html, /controller-mark\.png"[^>]*width="128" height="128"/);
-assert.match(css, /\.hero-art\s*\{[^}]*max-width:\s*100%[^}]*height:\s*auto/s);
+assert.match(css, /\.hero-visual\s*\{[^}]*max-width:\s*100%[^}]*aspect-ratio:\s*2\s*\/\s*1/s);
+assert.match(css, /\.hero-mark\s*\{[^}]*height:\s*auto[^}]*display:\s*block/s);
 assert.match(css, /\.device-art\s*\{[^}]*max-width:\s*100%[^}]*height:\s*auto/s);
 assert.match(html, />Upstream DS4CC releases<\/a>/);
 
-for (const [, src] of html.matchAll(/(?:src|href)="(assets\/[^"#?]+)"/g)) {
-  assert.ok(fs.existsSync(path.join(root, src)), `missing static asset: ${src}`);
+for (const [, ref] of html.matchAll(/(?:src|href)="([^"#]+)"/g)) {
+  if (/^[a-z][a-z\d+.-]*:/i.test(ref)) continue;
+  const localPath = ref.split(/[?#]/, 1)[0];
+  assert.ok(fs.existsSync(path.join(root, localPath)), `missing local reference: ${ref}`);
 }
 assert.ok(!fs.existsSync(path.join(root, 'assets/logo-badge.png')), 'unused logo-badge.png remains');
+assert.ok(!fs.existsSync(path.join(root, 'assets/hero-journey.png')), 'removed branded hero asset remains');
 
 class ClassList {
   constructor(names = []) { this.names = new Set(names); }

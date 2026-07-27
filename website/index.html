@@ -8,7 +8,7 @@
   <meta name="color-scheme" content="dark">
   <meta property="og:title" content="omegaG — formerly DS4CC">
   <meta property="og:description" content="Turn a PlayStation controller into a shortcut mapper for terminal-first development.">
-  <meta property="og:image" content="assets/hero-journey.png">
+  <meta property="og:image" content="assets/controller-mark.png">
   <link rel="icon" type="image/x-icon" href="assets/favicon.ico">
   <link rel="stylesheet" href="style.css">
 </head>
@@ -31,10 +31,16 @@
     <span class="nav-tag">formerly DS4CC</span>
   </nav>
 
-  <!-- HERO — the ds4cc hero: big art, tagline, attribution, action, sub-strip -->
+  <!-- HERO — omegaG-native controller mark and interface motif -->
   <main id="main">
   <header class="hero" id="top">
-    <img src="assets/hero-journey.png" alt="Illustrated hand holding a DualSense controller above the Claude DS4/5 Vibe City badge" class="hero-art" width="1720" height="968" decoding="async" fetchpriority="high" data-animate style="--stagger:1">
+    <div class="hero-visual" role="img" aria-label="omegaG controller shortcut interface" data-animate style="--stagger:1">
+      <span class="hero-orbit" aria-hidden="true"></span>
+      <span class="hero-panel">
+        <img src="assets/controller-mark.png" class="hero-mark" width="128" height="128" alt="" decoding="async">
+        <span class="hero-signal" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></span>
+      </span>
+    </div>
     <p class="hero-eyebrow" data-animate style="--stagger:2">formerly DS4CC — the shortcut mapper, preserved</p>
     <h1 class="hero-title" data-animate style="--stagger:3">omegaG</h1>
     <p class="hero-tagline" data-animate style="--stagger:4">Turn a PlayStation controller into a shortcut mapper for terminal-first development.</p>
