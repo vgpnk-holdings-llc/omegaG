@@ -32,6 +32,18 @@ body {
 
 a { color: inherit; }
 
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 .skip-link {
   position: fixed;
   z-index: 100;
@@ -111,6 +123,8 @@ a { color: inherit; }
 }
 .hero-art {
   width: min(860px, 88vw);
+  max-width: 100%;
+  height: auto;
   border-radius: 12px;
   display: block;
 }
@@ -329,7 +343,7 @@ a { color: inherit; }
   overflow: hidden;
   border: 1px solid var(--line);
 }
-.device-art { display: block; width: 100%; }
+.device-art { display: block; width: 100%; max-width: 100%; height: auto; }
 .etch {
   position: absolute;
   font-family: var(--mono);
@@ -449,19 +463,17 @@ a { color: inherit; }
   .section { padding: 5.5rem 1.25rem; }
   .spec-row { grid-template-columns: 1fr; gap: 0.4rem; }
   .map-grid { grid-template-columns: 1fr; }
-  .nav { padding-inline: 1rem; gap: 1rem; }
-  .nav-links { gap: 0.85rem; margin-left: auto; }
+  .nav { padding-inline: 1rem; gap: 0.55rem 1rem; flex-wrap: wrap; }
+  .nav-links { order: 2; width: 100%; gap: 0.85rem; margin-left: 0; justify-content: space-between; }
   .nav-links a { font-size: 0.66rem; }
-  .nav-links a:nth-child(-n+2) { display: none; }
+  .nav-links a:last-child { display: none; }
   .etch-left, .etch-right { display: none; }
   .hero-sub { font-size: 0.62rem; }
 }
 
 @media (max-width: 390px) {
-  .nav-word { display: none; }
   .nav-links a { font-size: 0.62rem; letter-spacing: 0.07em; }
-  .nav-links a:nth-child(3) { display: none; }
-  .hero { padding-inline: 1rem; }
+  .hero { padding: 8.5rem 1rem 4rem; }
   .feat { grid-template-columns: 1fr; gap: 0.5rem; }
   .feat-num { padding-top: 0; }
 }

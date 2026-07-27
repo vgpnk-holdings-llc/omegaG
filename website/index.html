@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>omegaG — formerly DS4CC · controller-native agent control</title>
   <meta name="description" content="omegaG turns a DualSense or DualShock 4 controller into a Linux and Windows shortcut mapper for terminal-first development.">
+  <meta name="color-scheme" content="dark">
   <meta property="og:title" content="omegaG — formerly DS4CC">
   <meta property="og:description" content="Turn a PlayStation controller into a shortcut mapper for terminal-first development.">
   <meta property="og:image" content="assets/hero-journey.png">
@@ -18,7 +19,7 @@
   <!-- NAV -->
   <nav class="nav" aria-label="Primary navigation">
     <a href="#top" class="nav-brand">
-      <img src="assets/controller-mark.png" alt="" class="nav-mark">
+      <img src="assets/controller-mark.png" alt="" class="nav-mark" width="128" height="128" decoding="async">
       <span class="nav-word">omegaG</span>
     </a>
     <div class="nav-links">
@@ -33,11 +34,11 @@
   <!-- HERO — the ds4cc hero: big art, tagline, attribution, action, sub-strip -->
   <main id="main">
   <header class="hero" id="top">
-    <img src="assets/hero-journey.png" alt="Illustrated hand holding a DualSense controller above the Claude DS4/5 Vibe City badge" class="hero-art" data-animate style="--stagger:1">
+    <img src="assets/hero-journey.png" alt="Illustrated hand holding a DualSense controller above the Claude DS4/5 Vibe City badge" class="hero-art" width="1720" height="968" decoding="async" fetchpriority="high" data-animate style="--stagger:1">
     <p class="hero-eyebrow" data-animate style="--stagger:2">formerly DS4CC — the shortcut mapper, preserved</p>
     <h1 class="hero-title" data-animate style="--stagger:3">omegaG</h1>
     <p class="hero-tagline" data-animate style="--stagger:4">Turn a PlayStation controller into a shortcut mapper for terminal-first development.</p>
-    <p class="hero-attribution" data-animate style="--stagger:5"><em>Same package, same binary, same config path — MIT attribution intact.</em></p>
+    <p class="hero-attribution" data-animate style="--stagger:5"><em>Same package and binary; Windows config path preserved — MIT attribution intact.</em></p>
     <div class="hero-actions" data-animate style="--stagger:6">
        <a href="https://github.com/vgpnk-holdings-llc/omegaG" class="btn-primary" target="_blank" rel="noopener noreferrer">View on GitHub</a>
     </div>
@@ -112,7 +113,7 @@
         <circle class="mute-led" cx="330" cy="386" r="2.6"/>
 
         <!-- state readout, etched on the shell -->
-        <text class="shell-etch" x="330" y="438" text-anchor="middle">selected slot · <tspan class="etch-state">thinking</tspan></text>
+        <text class="shell-etch" x="330" y="438" text-anchor="middle">selected slot 3 · <tspan class="etch-state">thinking</tspan></text>
       </svg>
 
       <!-- state chips -->
@@ -127,14 +128,15 @@
           <button class="chip" type="button" aria-pressed="false" data-state="unassigned"      data-color=""><i aria-hidden="true"></i>unassigned</button>
         </div>
 
-        <div class="lb-slots" aria-label="Six chat slots">
+        <div class="lb-slots" aria-label="Six chat slots; slot 3 selected">
           <span class="slot" data-i="1">1</span>
           <span class="slot" data-i="2">2</span>
-          <span class="slot is-sel" data-i="3">3</span>
+          <span class="slot is-sel" data-i="3" aria-current="true">3</span>
           <span class="slot" data-i="4">4</span>
           <span class="slot" data-i="5">5</span>
           <span class="slot" data-i="6">6</span>
         </div>
+        <p class="sr-only" role="status" aria-live="polite" aria-atomic="true">Selected slot 3 status: <span class="live-state">thinking</span></p>
         <p class="lb-policy">slot source — <b>recent</b> · pinned · priority · custom</p>
 
         <p class="lb-note">In the Windows runtime, a controller lightbar is lossy: it shows the <em>selected</em> slot, not six colors at once. This status projection is not available on Linux. DS4 has no player or mute LEDs.</p>
@@ -152,7 +154,7 @@
         <p class="feat-num">[01]</p>
         <div class="feat-body">
           <h3>Hold PS for the modifier layer</h3>
-          <p>While PS is held the controller goes exclusive: L1 / R1 cycle the six chat slots, Share starts a blank thread, Options forks it, the touchpad selects — and a second press within 350&nbsp;ms activates. Release PS and every generic mapping is untouched, exactly as before.</p>
+          <p>While PS is held the controller goes exclusive: L1 / R1 cycle the six chat slots, Share starts a blank thread, Options forks it, the touchpad selects — and a second press within 350&nbsp;ms activates. Release PS to return to the generic mapper: Share and Options are unmapped by default; touchpad press clicks while touchpad mode is enabled and is otherwise configurable, with no default action.</p>
         </div>
         <svg class="feat-glyph" viewBox="0 0 96 96" aria-hidden="true">
           <circle cx="48" cy="48" r="30" fill="none" stroke="currentColor" stroke-width="2"/>
@@ -166,7 +168,7 @@
         <p class="feat-num">[02]</p>
         <div class="feat-body">
           <h3>Core actions under your thumbs</h3>
-          <p>Cross and Circle are the one-shot accept / decline for the armed approval — nothing else can fire them. Square toggles the priority tier, Triangle sends the bounded composer, and L2 is push-to-talk: a second press within 350&nbsp;ms latches hands-free, the next press stops.</p>
+          <p>Cross and Circle are the one-shot accept / decline for the armed approval — nothing else can fire them. Square toggles the priority tier, Triangle sends the bounded composer, and, when a voice command is configured, L2 controls push-to-talk: a second press within 350&nbsp;ms latches hands-free, the next press stops.</p>
         </div>
         <svg class="feat-glyph" viewBox="0 0 96 96" aria-hidden="true">
           <g fill="none" stroke="currentColor" stroke-width="2">
@@ -198,10 +200,10 @@
   <!-- DEVICE SHOT + engravings — the masterpiece, etched like the macro pad -->
   <section class="device" id="device">
     <div class="device-frame">
-      <img src="assets/masterpiece.png" alt="Close-up DualSense silhouette beside a pink Vibe City sign" class="device-art">
+      <img src="assets/masterpiece.png" alt="Close-up DualSense silhouette beside a pink Vibe City sign" class="device-art" width="2720" height="1190" loading="lazy" decoding="async">
       <span class="etch etch-left">omegaG&thinsp;|&thinsp;formerly DS4CC — 2026</span>
-      <span class="etch etch-right">Voice dictates. Controller navigates.</span>
-      <span class="etch etch-bottom">No keyboard required.</span>
+      <span class="etch etch-right">Configured voice dictates. Controller navigates.</span>
+      <span class="etch etch-bottom">Keyboard optional when configured.</span>
     </div>
   </section>
 
@@ -217,7 +219,7 @@
       <div class="spec-row"><dt>Mapping</dt><dd>Every configurable button resolves to a key combo, a chord sequence, a tmux action, or a Claude Code action. Touchpad swipe or left stick moves the cursor; touchpad press clicks; right stick scrolls, vertical + horizontal; mute toggles the system microphone.</dd></div>
       <div class="spec-row"><dt>Detection</dt><dd>tmux and Claude Code keybindings are detected through WSL on Windows and natively on Linux. Missing pieces degrade gracefully to documented defaults.</dd></div>
       <div class="spec-row"><dt>Codex runtime</dt><dd>Windows-only, optional, and disabled by default. It supervises a local <code>codex app-server --stdio</code>. On Linux the configuration still parses, but enabling it logs a warning and the runtime is ignored.</dd></div>
-      <div class="spec-row"><dt>Config</dt><dd>TOML. <code>%APPDATA%\ds4cc\config.toml</code> on Windows, <code>~/.config/ds4cc/config.toml</code> on Linux. Every setting optional — defaults work out of the box.</dd></div>
+      <div class="spec-row"><dt>Config</dt><dd>TOML. The preserved Windows path is <code>%APPDATA%\ds4cc\config.toml</code>. Linux uses <code>$XDG_CONFIG_HOME/ds4cc/config.toml</code>, falling back to <code>~/.config/ds4cc/config.toml</code> when <code>$XDG_CONFIG_HOME</code> is unset. Every setting is optional — defaults work out of the box.</dd></div>
       <div class="spec-row"><dt>Stack</dt><dd>Rust 2024 edition, tokio, hidapi. Input read 5&nbsp;ms, output refresh 100&nbsp;ms. MIT license.</dd></div>
     </dl>
 
@@ -228,7 +230,7 @@
         <span><b>Right stick</b>scroll, both axes</span>
         <span><b>Left stick / touchpad</b>mouse cursor</span>
         <span><b>Touchpad press</b>left-click</span>
-        <span><b>L2 (hold)</b>Ctrl+Win — push-to-talk</span>
+        <span><b>L2 (hold)</b>Ctrl+Win — usable for configured push-to-talk</span>
         <span><b>Mute</b>toggle system mic</span>
       </div>
       <p class="map-title">Default map — configurable</p>
@@ -241,6 +243,8 @@
         <span><b>R2</b>tmux kill-window</span>
         <span><b>L3</b>ctrl+t</span>
         <span><b>R3</b>ctrl+u — clear line</span>
+        <span><b>Share / Options</b>unmapped</span>
+        <span><b>Touchpad button</b>unmapped when touchpad mode is disabled</span>
       </div>
     </div>
   </section>
@@ -249,11 +253,11 @@
   <!-- FOOTER -->
   <footer class="footer" id="footer">
     <p class="footer-mark" aria-hidden="true">omegaG</p>
-    <p class="footer-line">omegaG is a fork of <a href="https://github.com/VeigaPunk/DS4CC" target="_blank" rel="noopener noreferrer">VeigaPunk/DS4CC</a> — package, binary and config path preserved under MIT attribution.</p>
+    <p class="footer-line">omegaG is a fork of <a href="https://github.com/VeigaPunk/DS4CC" target="_blank" rel="noopener noreferrer">VeigaPunk/DS4CC</a> — package, binary and Windows config path preserved under MIT attribution.</p>
     <p class="footer-links">
       <a href="https://github.com/vgpnk-holdings-llc/omegaG" target="_blank" rel="noopener noreferrer">GitHub</a>
       &nbsp;·&nbsp;
-      <a href="https://github.com/VeigaPunk/DS4CC/releases/latest" target="_blank" rel="noopener noreferrer">Releases</a>
+      <a href="https://github.com/VeigaPunk/DS4CC/releases/latest" target="_blank" rel="noopener noreferrer">Upstream DS4CC releases</a>
       &nbsp;·&nbsp;
       MIT License
       &nbsp;·&nbsp;

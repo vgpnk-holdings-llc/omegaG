@@ -7,8 +7,8 @@
 
   var bar    = stage.querySelector('.lightbar');
   var chips  = Array.prototype.slice.call(stage.querySelectorAll('.chip'));
-  var slots  = Array.prototype.slice.call(stage.querySelectorAll('.slot'));
   var etch   = stage.querySelector('.etch-state');
+  var live   = stage.querySelector('.live-state');
 
   function hexToGlow(hex) {
     if (!hex) return 'transparent';
@@ -18,7 +18,7 @@
     return 'rgba(' + r + ',' + g + ',' + b + ',0.45)';
   }
 
-  function select(chip, idx) {
+  function setStatus(chip) {
     var color = chip.getAttribute('data-color');
     var state = chip.getAttribute('data-state');
 
@@ -28,8 +28,6 @@
     });
     chip.classList.add('is-on');
     chip.setAttribute('aria-pressed', 'true');
-
-    slots.forEach(function (s, i) { s.classList.toggle('is-sel', i === idx); });
 
     if (color) {
       stage.style.setProperty('--lb', color);
@@ -43,15 +41,14 @@
     }
 
     if (etch) etch.textContent = state;
+    if (live) live.textContent = state;
   }
 
-  chips.forEach(function (chip, idx) {
+  chips.forEach(function (chip) {
     chip.style.setProperty('--c', chip.getAttribute('data-color') || '#3a3a3f');
-    chip.addEventListener('mouseenter', function () { select(chip, idx); });
-    chip.addEventListener('focus',      function () { select(chip, idx); });
-    chip.addEventListener('click',      function () { select(chip, idx); });
+    chip.addEventListener('click', function () { setStatus(chip); });
   });
 
   // initial state: thinking on slot 3
-  select(chips[1], 1);
+  setStatus(chips[1]);
 })();
