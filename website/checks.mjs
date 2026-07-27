@@ -25,6 +25,9 @@ assert.match(html, /when a voice command is configured, L2 controls push-to-talk
 assert.match(html, /Keyboard optional when configured/);
 assert.match(html, /Share and Options are unmapped by default/);
 assert.match(html, /Touchpad button<\/b>unmapped when touchpad mode is disabled/);
+assert.match(html, /On DualSense, touchpad swipe moves the cursor; DualShock 4 uses left-stick mouse because coordinates are unsupported\. On both controllers, touchpad press clicks while touchpad handling is enabled\./);
+assert.match(html, /<b>Left stick \/ DualSense touchpad swipe<\/b>mouse cursor/);
+assert.match(html, /<b>Touchpad press<\/b>left-click on DualSense and DS4/);
 assert.match(html, /optional Windows-only Codex runtime enabled/);
 assert.match(html, /website illustration[\s\S]*not a live controller or HID connection/);
 assert.match(html, /hero-journey\.png"[^>]*width="1720" height="968"/);

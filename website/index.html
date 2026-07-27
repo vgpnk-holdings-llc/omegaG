@@ -216,7 +216,7 @@
       <div class="spec-row"><dt>Platform</dt><dd>Windows 10 / 11 — hidden console, tray icon. Linux: Ubuntu 22.04+ and Arch with feature-parity mapping (evdev / uinput).</dd></div>
       <div class="spec-row"><dt>Controllers</dt><dd>DualSense and DualShock 4. USB and Bluetooth; USB takes priority, Bluetooth is the automatic fallback.</dd></div>
       <div class="spec-row"><dt>Feedback</dt><dd>Static lightbar color and mic LED are supported by the mapper. Codex status-to-lightbar projection is an optional Windows-only feature.</dd></div>
-      <div class="spec-row"><dt>Mapping</dt><dd>Every configurable button resolves to a key combo, a chord sequence, a tmux action, or a Claude Code action. Touchpad swipe or left stick moves the cursor; touchpad press clicks; right stick scrolls, vertical + horizontal; mute toggles the system microphone.</dd></div>
+      <div class="spec-row"><dt>Mapping</dt><dd>Every configurable button resolves to a key combo, a chord sequence, a tmux action, or a Claude Code action. On DualSense, touchpad swipe moves the cursor; DualShock 4 uses left-stick mouse because coordinates are unsupported. On both controllers, touchpad press clicks while touchpad handling is enabled. Right stick scrolls, vertical + horizontal; mute toggles the system microphone.</dd></div>
       <div class="spec-row"><dt>Detection</dt><dd>tmux and Claude Code keybindings are detected through WSL on Windows and natively on Linux. Missing pieces degrade gracefully to documented defaults.</dd></div>
       <div class="spec-row"><dt>Codex runtime</dt><dd>Windows-only, optional, and disabled by default. It supervises a local <code>codex app-server --stdio</code>. On Linux the configuration still parses, but enabling it logs a warning and the runtime is ignored.</dd></div>
       <div class="spec-row"><dt>Config</dt><dd>TOML. The preserved Windows path is <code>%APPDATA%\ds4cc\config.toml</code>. Linux uses <code>$XDG_CONFIG_HOME/ds4cc/config.toml</code>, falling back to <code>~/.config/ds4cc/config.toml</code> when <code>$XDG_CONFIG_HOME</code> is unset. Every setting is optional — defaults work out of the box.</dd></div>
@@ -228,8 +228,8 @@
       <div class="map-grid">
         <span><b>D-pad</b>arrow keys · hold to repeat</span>
         <span><b>Right stick</b>scroll, both axes</span>
-        <span><b>Left stick / touchpad</b>mouse cursor</span>
-        <span><b>Touchpad press</b>left-click</span>
+        <span><b>Left stick / DualSense touchpad swipe</b>mouse cursor</span>
+        <span><b>Touchpad press</b>left-click on DualSense and DS4</span>
         <span><b>L2 (hold)</b>Ctrl+Win — usable for configured push-to-talk</span>
         <span><b>Mute</b>toggle system mic</span>
       </div>
