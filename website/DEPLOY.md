@@ -6,12 +6,12 @@ Source of truth: this directory (`website/`).
 
 | Surface | Status |
 |---------|--------|
-| Git `website/` on `master` | Accurate (checks pass) |
-| Branch **`gh-pages`** | **Shipped** — static tree published by CI ([run](https://github.com/vgpnk-holdings-llc/omegaG/actions/runs/30722792411)) |
-| https://vgpnk-holdings-llc.github.io/omegaG/ | **404** until an admin sets Pages source (API create = 403 for GITHUB_TOKEN) |
-| https://ds4cc-proto.kimi.page/ | **Stale** — still pre-audit marketing copy |
-| Raw tree (debug) | https://raw.githubusercontent.com/vgpnk-holdings-llc/omegaG/gh-pages/index.html |
-| Release zip | CI tag `website-static` (see below) |
+| **https://veigapunk.github.io/omegag-site/** | **LIVE · accurate** (personal mirror repo [VeigaPunk/omegag-site](https://github.com/VeigaPunk/omegag-site)) |
+| Git `website/` on `master` | Accurate (checks pass) — source of truth |
+| Branch **`gh-pages`** (org) | Shipped accurate tree; org github.io still blocked (Pages 403) |
+| https://vgpnk-holdings-llc.github.io/omegaG/ | **404** — org Pages bootstrap blocked |
+| https://ds4cc-proto.kimi.page/ | **Stale** — upload zip when ready |
+| Release zip | tag `website-static` |
 
 ## Pre-flight
 

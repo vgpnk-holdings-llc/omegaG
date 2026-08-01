@@ -160,15 +160,14 @@ Legend: **OK** · **LIVE-BAD** (live only) · **SOFT** · **GAP**
 | P0 site fixes under `website/` | Done (content + binary name + checks) |
 | Commit on `website-audit` | Done this pass |
 | Push `origin/website-audit` | Attempted; no force-push |
-| Live redeploy (kimi.page) | **Still stale / blocked** — no Kimi publish token |
-| GitHub Pages (`deploy-pages`) | **403** create site — org blocks GITHUB_TOKEN bootstrap |
-| **`gh-pages` branch** | **SHIPPED** — accurate site |
-| github.io URL | **404** until admin: Settings → Pages → branch `gh-pages` |
-| **Release `website-static`** | CI packages zip for kimi/SFTP (workflow `website-static-release.yml`) |
-| **Docker** | `website/Dockerfile` nginx — local smoke OK |
-| DigitalOcean Apps | Token valid; create fails **`GitHub user not authenticated`** — link GH in DO console |
-| GitHub PAT “GitHub CLI” in 1Password | **Invalid** (401) — rotate |
-| GitHub MCP write | **403** — git SSH push works |
+| **Public accurate site** | **https://veigapunk.github.io/omegag-site/** LIVE |
+| Mirror repo | https://github.com/VeigaPunk/omegag-site (synced from `website/`) |
+| Live redeploy (kimi.page) | Still stale — optional; zip at `website-static` release |
+| Org GitHub Pages | **403** bootstrap; `gh-pages` branch has content |
+| **Release `website-static`** | Zip for kimi/SFTP |
+| **Docker** | `website/Dockerfile` |
+| DigitalOcean Apps | Needs GitHub OAuth in DO console |
+| GitHub PAT “GitHub CLI” in 1Password | Invalid (401) — rotate |
 
 ---
 
