@@ -95,17 +95,24 @@ Workflow: `.github/workflows/pages-website.yml`
 | `deploy-pages` | Official Actions Pages (`continue-on-error`) |
 | `deploy-gh-pages-branch` | **Always** publish to branch `gh-pages` |
 
-### One-time admin (unblocks github.io) — ~30 seconds
+### Org github.io — one-time enable (no token / no API)
+
+Accurate static files are **already on branch `gh-pages`** (CI `deploy-gh-pages-branch`).
 
 1. Open https://github.com/vgpnk-holdings-llc/omegaG/settings/pages  
-2. **Build and deployment → Source:** either  
-   - **Deploy from a branch** → Branch `gh-pages` / `/ (root)` → Save, **or**  
-   - **GitHub Actions** (then re-run workflow `Pages (website)`)  
-3. Wait 1–2 minutes → https://vgpnk-holdings-llc.github.io/omegaG/ should 200.
+2. **Build and deployment → Source → Deploy from a branch**  
+3. Branch: **`gh-pages`** · folder: **`/`** (root) · **Save**  
+4. Wait ~1–2 min → https://vgpnk-holdings-llc.github.io/omegaG/ should 200  
 
-`GITHUB_TOKEN` cannot create the Pages site for this org (`403 Resource not accessible by integration`). Branch content is already correct; only the Pages switch is missing.
+Do **not** wait for tokens, PAT rotation, or Actions “github-pages” environment bootstrap. Branch deploy is sufficient.
 
-When Pages is the primary public host, update absolute `og:*` and `canonical` in `index.html` to that origin and re-run `node website/checks.mjs` (checks currently pin the kimi.page origin).
+Verify branch content anytime:
+
+```bash
+curl -sL https://raw.githubusercontent.com/vgpnk-holdings-llc/omegaG/gh-pages/index.html | head
+```
+
+Primary public URL remains https://veigapunk.github.io/omegag-site/ until org Pages is toggled (optional). Canonical/OG already point at the VeigaPunk mirror.
 
 ---
 
@@ -114,21 +121,4 @@ When Pages is the primary public host, update absolute `og:*` and `canonical` in
 ```bash
 cd website && python3 -m http.server 8765
 # open http://127.0.0.1:8765/
-```
-
-## B. GitHub Pages via `gh-pages` branch (fallback)
-
-CI may push static files to branch `gh-pages` when the Pages REST API is unavailable.
-
-**Human enable once:**
-
-1. Repo **Settings → Pages**
-2. **Build and deployment → Source → Deploy from a branch**
-3. Branch: **`gh-pages`** / folder: **`/`** (root)
-4. Save → site at `https://vgpnk-holdings-llc.github.io/omegaG/`
-
-Verify content before enable:
-
-```bash
-curl -sI https://raw.githubusercontent.com/vgpnk-holdings-llc/omegaG/gh-pages/index.html
 ```

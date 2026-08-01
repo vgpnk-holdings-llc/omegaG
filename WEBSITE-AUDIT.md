@@ -137,7 +137,7 @@ Legend: **OK** · **LIVE-BAD** (live only) · **SOFT** · **GAP**
 | P2.3 | Privacy note if Kimi SDK stays |
 | P2.4 | Optional docs link (README/SPEC) |
 | P2.5 | Auto-sync `website/` → VeigaPunk/omegag-site on master push |
-| P2.6 | Enable org Pages Actions env → `vgpnk-holdings-llc.github.io/omegaG` |
+| P2.6 | Org github.io via Settings→Pages→branch `gh-pages` / | External one-click |
 
 ---
 
@@ -179,28 +179,35 @@ Legend: **OK** · **LIVE-BAD** (live only) · **SOFT** · **GAP**
 |-----|------------|
 | https://veigapunk.github.io/ | **Plazir** user site (unrelated fan codex) — LIVE 200 |
 | https://veigapunk.github.io/omegag-site/ | **omegaG marketing** — LIVE accurate 200 |
-| https://vgpnk-holdings-llc.github.io/omegaG/ | Org project Pages — **404** until Actions/Pages env enabled |
+| https://vgpnk-holdings-llc.github.io/omegaG/ | Org project Pages — **404** until branch Pages enabled (see below) |
 | https://ds4cc-proto.kimi.page/ | Proto marketing — **stale** (optional refresh) |
-| `gh-pages` branch on org repo | Accurate tree for org Pages once enabled |
+| `gh-pages` branch on org repo | **Accurate content already published** |
 
-## 11. HALT — residual external only
+### Org Pages enable (once — no token)
 
-**Audit mission: HALT (success path closed for in-repo + accurate public host).**
+**Settings → Pages → Deploy from a branch → `gh-pages` / `/` (root) → Save.**
 
-No further website accuracy work required under `website/` unless product copy changes.
+Content is already on `gh-pages`. Do not wait for PAT, Actions environment, or API create-site (403).
 
-| Residual | Owner | Blocker |
-|----------|-------|---------|
-| Org project Pages 404 | Org admin | Enable **Settings → Pages** (Actions env or branch `gh-pages`); GITHUB_TOKEN got **403** create-site |
-| kimi.page stale | Human + Kimi UI | No publish API; zip at release `website-static` |
-| 1Password “GitHub CLI” PAT | Human | Invalid 401 — rotate if local `gh` needed |
-| Plazir vs omegaG URLs | Docs | Apex = Plazir; `/omegag-site/` = omegaG — keep distinct |
+## 11. HALT
 
-**Do not** overwrite https://veigapunk.github.io/ (Plazir) with omegaG.
+**Audit mission: HALT.**
+
+| Axis | Status |
+|------|--------|
+| Accuracy vs code/README/SPEC | Done (`website/` + checks) |
+| Public accurate host | Done — https://veigapunk.github.io/omegag-site/ |
+| Org `gh-pages` content | Done (CI) |
+| Ship-quality residuals in `website/` | **None** — no further code work this mission |
+| Org github.io | External toggle only (above) |
+| kimi.page | Optional; not the accuracy gate |
+| Plazir apex `veigapunk.github.io/` | Separate product — **do not overwrite** |
+
+P2 items (launcher marketing, fonts, auto-sync mirror) are out of scope for this audit unless product reopens.
 
 ```bash
 node website/checks.mjs
-bash website/verify-live.sh   # requires veigapunk.github.io/omegag-site PASS
+bash website/verify-live.sh
 ```
 
-**Bottom line:** Accurate omegaG site is public at **https://veigapunk.github.io/omegag-site/**. Org github.io and kimi.page are optional lagging hosts.
+**Bottom line:** Accurate omegaG site is live. Org github.io is a one-click Pages branch setting. **HALT.**
