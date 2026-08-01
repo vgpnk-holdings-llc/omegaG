@@ -126,7 +126,7 @@ Legend: **OK** · **LIVE-BAD** (live only) · **SOFT** · **GAP**
 | P1.3 | Rename host off `ds4cc-proto` (kimi) | Open (optional; kimi not accuracy gate) |
 | P1.4 | Compress `masterpiece.png` | **Done** |
 | P1.5 | Keep `website/tools/` out of deploys | **Done** |
-| P1.6 | GitHub Pages workflows | **Done** (org env still needs admin) |
+| P1.6 | GitHub Pages workflows | **Done** (org: Settings→Pages→`gh-pages` / once) |
 
 ### P2 — nice-to-have (post-HALT)
 
