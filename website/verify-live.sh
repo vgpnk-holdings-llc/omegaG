@@ -54,7 +54,7 @@ check_url "veigapunk.github.io" "https://veigapunk.github.io/omegag-site/" || ec
 check_http "veigapunk robots.txt" "https://veigapunk.github.io/omegag-site/robots.txt" || ec=1
 check_url "gh-pages raw (org)" "https://raw.githubusercontent.com/vgpnk-holdings-llc/omegaG/gh-pages/index.html" || ec=1
 check_url "org github.io" "https://vgpnk-holdings-llc.github.io/omegaG/" || ec=1
-check_http "org robots.txt (optional)" "https://vgpnk-holdings-llc.github.io/omegaG/robots.txt" || true
+check_http "org robots.txt" "https://vgpnk-holdings-llc.github.io/omegaG/robots.txt" || ec=1
 # Soft-fail lagging proto host
 check_url "kimi.page (may lag)" "https://ds4cc-proto.kimi.page/" || true
 exit "$ec"

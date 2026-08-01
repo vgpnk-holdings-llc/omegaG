@@ -45,7 +45,9 @@ jobs:
           mkdir -p _site
           cp website/index.html website/style.css website/main.js _site/
           cp -a website/assets _site/assets
-          # Optional base-path note for project Pages (root works for custom domain / apex)
+          # robots + nojekyll so branch/Actions Pages serve crawler policy and skip Jekyll
+          [[ -f website/robots.txt ]] && cp website/robots.txt _site/
+          touch _site/.nojekyll
           printf '%s\n' 'website checks staged' > _site/.build-id
           echo "${GITHUB_SHA}" >> _site/.build-id
       - uses: actions/upload-artifact@v4
