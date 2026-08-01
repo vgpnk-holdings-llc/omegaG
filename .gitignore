@@ -10,4 +10,7 @@ installer/output/
 website/tools/node_modules/
 website/tools/package-lock.json
 
+# local kimi/manual upload packages (see website/DEPLOY.md)
+/dist/
+
 dist/

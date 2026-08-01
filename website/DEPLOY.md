@@ -2,6 +2,16 @@
 
 Source of truth: this directory (`website/`).
 
+## Status (2026-08-01)
+
+| Surface | Status |
+|---------|--------|
+| Git `website/` on `master` | Accurate (checks pass) |
+| Branch **`gh-pages`** | **Shipped** — static tree published by CI ([run](https://github.com/vgpnk-holdings-llc/omegaG/actions/runs/30722792411)) |
+| https://vgpnk-holdings-llc.github.io/omegaG/ | **404** until an admin sets Pages source (API create = 403 for GITHUB_TOKEN) |
+| https://ds4cc-proto.kimi.page/ | **Stale** — still pre-audit marketing copy |
+| Raw tree (debug) | https://raw.githubusercontent.com/vgpnk-holdings-llc/omegaG/gh-pages/index.html |
+
 ## Pre-flight
 
 ```bash
@@ -16,6 +26,16 @@ Upload **only**:
 - `assets/*`
 
 Do **not** upload `website/tools/`, `node_modules`, or repo docs.
+
+### Local package for kimi / SFTP
+
+```bash
+mkdir -p dist/website-static
+cp website/index.html website/style.css website/main.js dist/website-static/
+cp -a website/assets dist/website-static/assets
+(cd dist && tar -czf omegaG-website-static.tgz website-static)
+# → dist/omegaG-website-static.tgz  (gitignored)
+```
 
 ---
 
@@ -38,24 +58,28 @@ Do **not** upload `website/tools/`, `node_modules`, or repo docs.
 
 ---
 
-## B. GitHub Pages (repo-hosted fallback)
+## B. GitHub Pages
 
 Workflow: `.github/workflows/pages-website.yml`
 
-- Deploys the `website/` folder from `master` (and `workflow_dispatch`).
-- `configure-pages` uses **`enablement: true`** so the first successful Actions run can bootstrap a Pages site (avoids `Get Pages site failed … Not Found`).
-- If the deploy job still fails, open **Settings → Pages → Source: GitHub Actions** once (org policy can block auto-enable).
-- Expected URL: `https://vgpnk-holdings-llc.github.io/omegaG/`
+| Job | Role |
+|-----|------|
+| `check` | `node website/checks.mjs` |
+| `build` | Stage `_site` + upload artifact `website-static` |
+| `deploy-pages` | Official Actions Pages (`continue-on-error`) |
+| `deploy-gh-pages-branch` | **Always** publish to branch `gh-pages` |
 
-**Observed 2026-08-01:**
+### One-time admin (unblocks github.io) — ~30 seconds
 
-| Run | Result |
-|-----|--------|
-| First | `configure-pages`: Pages site Not Found |
-| After `enablement: true` | Create Pages site **403 Resource not accessible by integration** (GITHUB_TOKEN cannot bootstrap Pages for this org/repo) |
-| Mitigation | Workflow also pushes `_site` → **`gh-pages` branch** via `peaceiris/actions-gh-pages`. Admin can set Pages source to branch `gh-pages` / root **or** GitHub Actions once. |
+1. Open https://github.com/vgpnk-holdings-llc/omegaG/settings/pages  
+2. **Build and deployment → Source:** either  
+   - **Deploy from a branch** → Branch `gh-pages` / `/ (root)` → Save, **or**  
+   - **GitHub Actions** (then re-run workflow `Pages (website)`)  
+3. Wait 1–2 minutes → https://vgpnk-holdings-llc.github.io/omegaG/ should 200.
 
-When Pages is the primary public host, update absolute `og:*` and `canonical` in `index.html` to that origin and re-run `node website/checks.mjs` (checks pin the kimi.page origin today).
+`GITHUB_TOKEN` cannot create the Pages site for this org (`403 Resource not accessible by integration`). Branch content is already correct; only the Pages switch is missing.
+
+When Pages is the primary public host, update absolute `og:*` and `canonical` in `index.html` to that origin and re-run `node website/checks.mjs` (checks currently pin the kimi.page origin).
 
 ---
 

@@ -160,12 +160,13 @@ Legend: **OK** · **LIVE-BAD** (live only) · **SOFT** · **GAP**
 | P0 site fixes under `website/` | Done (content + binary name + checks) |
 | Commit on `website-audit` | Done this pass |
 | Push `origin/website-audit` | Attempted; no force-push |
-| Live redeploy (kimi.page) | **Blocked** — no Kimi publish token/UI in workspace; see `website/DEPLOY.md` |
-| GitHub Pages workflow | Checks **green**; deploy failed (Pages not enabled). Fix: `enablement: true` on `configure-pages` |
-| GitHub PAT in 1Password “GitHub CLI” | **Invalid** (401) — rotate/update for local `gh` |
-| GitHub MCP write (issues / workflow_dispatch) | **403** integration — push via SSH still works |
+| Live redeploy (kimi.page) | **Still stale / blocked** — no Kimi publish token; package via `dist/omegaG-website-static.tgz` (local, gitignored) |
+| GitHub Pages (`deploy-pages`) | **403** create site — org blocks GITHUB_TOKEN bootstrap |
+| **`gh-pages` branch** | **SHIPPED** — accurate site (run `30722792411`, deploy-gh-pages-branch success) |
+| github.io URL | **404** until admin: Settings → Pages → branch `gh-pages` (or Actions) |
+| GitHub PAT “GitHub CLI” in 1Password | **Invalid** (401) — rotate |
+| GitHub MCP write (issues / dispatch) | **403** — git SSH push works |
 | P1 CTAs / OG / asset resize | On `master` |
-| README site links | Product site + `website/` + DEPLOY + audit |
 
 ---
 
