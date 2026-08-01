@@ -15,6 +15,13 @@
   <img src="https://img.shields.io/badge/DualSense%20%2F%20DS4-USB%20%2B%20BT-003791?logo=playstation&logoColor=white" alt="Controllers">
 </p>
 
+<p align="center">
+  <a href="https://ds4cc-proto.kimi.page/">Product site (kimi.page)</a>
+  · source in <a href="website/"><code>website/</code></a>
+  · deploy notes <a href="website/DEPLOY.md"><code>website/DEPLOY.md</code></a>
+  · accuracy audit <a href="WEBSITE-AUDIT.md"><code>WEBSITE-AUDIT.md</code></a>
+</p>
+
 ---
 
 ## Mission

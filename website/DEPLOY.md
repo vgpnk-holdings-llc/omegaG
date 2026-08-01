@@ -42,9 +42,12 @@ Do **not** upload `website/tools/`, `node_modules`, or repo docs.
 
 Workflow: `.github/workflows/pages-website.yml`
 
-- Deploys the `website/` folder from `master` (and workflow_dispatch).
-- After first run, enable **Settings → Pages → Source: GitHub Actions**.
-- Expected URL pattern: `https://vgpnk-holdings-llc.github.io/omegaG/`
+- Deploys the `website/` folder from `master` (and `workflow_dispatch`).
+- `configure-pages` uses **`enablement: true`** so the first successful Actions run can bootstrap a Pages site (avoids `Get Pages site failed … Not Found`).
+- If the deploy job still fails, open **Settings → Pages → Source: GitHub Actions** once (org policy can block auto-enable).
+- Expected URL: `https://vgpnk-holdings-llc.github.io/omegaG/`
+
+**Observed 2026-08-01:** first run failed on `configure-pages` with Pages not configured; fix committed (`enablement: true`). Re-run after merge to `master`.
 
 When Pages is the primary public host, update absolute `og:*` and `canonical` in `index.html` to that origin and re-run `node website/checks.mjs` (checks pin the kimi.page origin today).
 

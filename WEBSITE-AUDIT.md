@@ -161,8 +161,11 @@ Legend: **OK** · **LIVE-BAD** (live only) · **SOFT** · **GAP**
 | Commit on `website-audit` | Done this pass |
 | Push `origin/website-audit` | Attempted; no force-push |
 | Live redeploy (kimi.page) | **Blocked** — no Kimi publish token/UI in workspace; see `website/DEPLOY.md` |
-| GitHub Pages workflow | Added `.github/workflows/pages-website.yml` — enable Pages → GitHub Actions once |
-| P1 CTAs / OG / asset resize | Landed on `website-audit` |
+| GitHub Pages workflow | Checks **green**; deploy failed (Pages not enabled). Fix: `enablement: true` on `configure-pages` |
+| GitHub PAT in 1Password “GitHub CLI” | **Invalid** (401) — rotate/update for local `gh` |
+| GitHub MCP write (issues / workflow_dispatch) | **403** integration — push via SSH still works |
+| P1 CTAs / OG / asset resize | On `master` |
+| README site links | Product site + `website/` + DEPLOY + audit |
 
 ---
 
