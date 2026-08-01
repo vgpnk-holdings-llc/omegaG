@@ -13,4 +13,8 @@ website/tools/package-lock.json
 # local kimi/manual upload packages (see website/DEPLOY.md)
 /dist/
 
+# session look-into notes (not product source)
+LOOKINTO*.md
+.grok-lookinto-prompt.md
+
 dist/

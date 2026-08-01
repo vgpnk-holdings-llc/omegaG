@@ -2,19 +2,23 @@
 
 Source of truth: this directory (`website/`).
 
-## Status (2026-08-01) — audit HALT
+## Status — MISSION CLOSED (accuracy)
 
 | Surface | Status |
 |---------|--------|
 | **https://veigapunk.github.io/omegag-site/** | **LIVE · accurate** ([VeigaPunk/omegag-site](https://github.com/VeigaPunk/omegag-site)) |
-| https://veigapunk.github.io/ | **Plazir** user Pages (separate product) — do not overwrite |
-| Git `website/` on `master` | Source of truth; checks pass |
-| Org `gh-pages` branch | Accurate tree ready |
-| https://vgpnk-holdings-llc.github.io/omegaG/ | **LIVE** (branch `gh-pages` / root) |
-| https://ds4cc-proto.kimi.page/ | Stale (optional) |
-| Release zip | tag `website-static` |
+| **https://vgpnk-holdings-llc.github.io/omegaG/** | **LIVE · accurate** (branch `gh-pages` / root) |
+| https://veigapunk.github.io/ | **Plazir** (separate) — do not overwrite |
+| Git `website/` on `master` | Source of truth; `node website/checks.mjs` pass |
+| Org `gh-pages` branch | Synced via `publish-gh-pages.sh` / CI |
+| Release `website-static` zip | In sync with master index (for kimi/SFTP) |
+| https://ds4cc-proto.kimi.page/ | Optional lag — not the accuracy gate |
 
-Canonical / OG in `index.html` point at `veigapunk.github.io/omegag-site/`.
+Canonical / OG → `veigapunk.github.io/omegag-site/`.
+
+```bash
+node website/checks.mjs && bash website/verify-live.sh && bash website/publish-all.sh
+```
 
 ## Pre-flight
 

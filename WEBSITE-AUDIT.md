@@ -189,25 +189,34 @@ Legend: **OK** · **LIVE-BAD** (live only) · **SOFT** · **GAP**
 
 Content is already on `gh-pages`. Do not wait for PAT, Actions environment, or API create-site (403).
 
-## 11. HALT
+## 11. MISSION CLOSED
 
-**Audit mission: HALT.**
+**Website look-into / accuracy mission: CLOSED.**
+
+Verified green (local + live required hosts):
+
+| Check | Result |
+|-------|--------|
+| `node website/checks.mjs` | pass |
+| `bash website/verify-live.sh` | exit 0 (kimi soft-fail only) |
+| Release zip `website-static` | index hash matches master |
+| Dual public hosts | both serve launcher + Windows-only fingerprints |
 
 | Axis | Status |
 |------|--------|
-| Accuracy vs code/README/SPEC | Done (`website/` + checks) |
-| Public accurate host | Done — https://veigapunk.github.io/omegag-site/ |
-| Org `gh-pages` content | Done (CI) |
-| Ship-quality residuals in `website/` | **None** — no further code work this mission |
-| Org github.io | External toggle only (above) |
-| kimi.page | Optional; not the accuracy gate |
-| Plazir apex `veigapunk.github.io/` | Separate product — **do not overwrite** |
+| Accuracy vs code/README/SPEC | **Done** |
+| https://veigapunk.github.io/omegag-site/ | **LIVE** |
+| https://vgpnk-holdings-llc.github.io/omegaG/ | **LIVE** |
+| Org `gh-pages` + publish scripts | **Done** |
+| Release zip for kimi | **In sync** (upload optional) |
+| kimi.page | Soft-lag only — not blocking |
+| Plazir apex | Untouched |
 
-P2 items (launcher marketing, fonts, auto-sync mirror) are out of scope for this audit unless product reopens.
+**Do not idle on tokens or further website churn without new product scope.**  
+Optional later only: self-host fonts, CI auto-sync mirror, kimi UI upload of `website-static` zip.
 
 ```bash
-node website/checks.mjs
-bash website/verify-live.sh
+node website/checks.mjs && bash website/verify-live.sh
+# after website/ edits:
+bash website/publish-all.sh
 ```
-
-**Bottom line:** Accurate omegaG site is live on **two** hosts (VeigaPunk mirror + org Pages). Release zip in sync. kimi optional. **HALT** on accuracy mission; polish (Docs footer, robots, theme-color) may continue without reopening P0.
