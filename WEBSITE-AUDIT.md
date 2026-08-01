@@ -165,7 +165,7 @@ Legend: **OK** · **LIVE-BAD** (live only) · **SOFT** · **GAP**
 | **Public accurate site** | **https://veigapunk.github.io/omegag-site/** LIVE |
 | Mirror repo | https://github.com/VeigaPunk/omegag-site (synced from `website/`) |
 | Live redeploy (kimi.page) | Still stale — optional; zip at `website-static` release |
-| Org GitHub Pages | **403** bootstrap; `gh-pages` branch has content |
+| Org GitHub Pages | Content on `gh-pages`; enable **Deploy from branch** once (no token) |
 | **Release `website-static`** | Zip for kimi/SFTP |
 | **Docker** | `website/Dockerfile` |
 | DigitalOcean Apps | Needs GitHub OAuth in DO console |
