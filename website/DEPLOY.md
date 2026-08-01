@@ -10,7 +10,7 @@ Source of truth: this directory (`website/`).
 | https://veigapunk.github.io/ | **Plazir** user Pages (separate product) — do not overwrite |
 | Git `website/` on `master` | Source of truth; checks pass |
 | Org `gh-pages` branch | Accurate tree ready |
-| https://vgpnk-holdings-llc.github.io/omegaG/ | **404** — enable org Actions Pages env (admin) |
+| https://vgpnk-holdings-llc.github.io/omegaG/ | **LIVE** (branch `gh-pages` / root) |
 | https://ds4cc-proto.kimi.page/ | Stale (optional) |
 | Release zip | tag `website-static` |
 
@@ -110,11 +110,15 @@ Verify branch content anytime:
 
 ```bash
 curl -sL https://raw.githubusercontent.com/vgpnk-holdings-llc/omegaG/gh-pages/index.html | head
-# or after local checks:
-bash website/publish-gh-pages.sh   # force-sync website/ → origin/gh-pages via SSH
+# Local-first publish (SSH, no PAT):
+bash website/publish-gh-pages.sh      # → origin/gh-pages
+bash website/publish-omegag-site.sh   # → VeigaPunk/omegag-site (live host)
+# or both + verify-live:
+bash website/publish-all.sh
 ```
 
-Primary public URL remains https://veigapunk.github.io/omegag-site/ until org Pages is toggled (optional). Canonical/OG already point at the VeigaPunk mirror.
+Primary public URL: https://veigapunk.github.io/omegag-site/  
+Do **not** publish to apex https://veigapunk.github.io/ (Plazir).
 
 ---
 

@@ -179,7 +179,7 @@ Legend: **OK** · **LIVE-BAD** (live only) · **SOFT** · **GAP**
 |-----|------------|
 | https://veigapunk.github.io/ | **Plazir** user site (unrelated fan codex) — LIVE 200 |
 | https://veigapunk.github.io/omegag-site/ | **omegaG marketing** — LIVE accurate 200 |
-| https://vgpnk-holdings-llc.github.io/omegaG/ | Org project Pages — **404** until branch Pages enabled (see below) |
+| https://vgpnk-holdings-llc.github.io/omegaG/ | Org project Pages — **LIVE** (branch `gh-pages` /) |
 | https://ds4cc-proto.kimi.page/ | Proto marketing — **stale** (optional refresh) |
 | `gh-pages` branch on org repo | **Accurate content already published** |
 
