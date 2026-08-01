@@ -36,10 +36,25 @@ check_url() {
 
 echo "Fingerprints from $ROOT/website/index.html must appear on live hosts."
 ec=0
+
+check_http() {
+  local name="$1" url="$2"
+  local code
+  code="$(curl -s -o /dev/null -w "%{http_code}" --max-time 20 "$url" || echo 000)"
+  if [[ "$code" == "200" ]]; then
+    echo "PASS  $name  HTTP $code  $url"
+    return 0
+  fi
+  echo "FAIL  $name  HTTP $code  $url"
+  return 1
+}
+
 # Primary public accurate host (VeigaPunk mirror)
 check_url "veigapunk.github.io" "https://veigapunk.github.io/omegag-site/" || ec=1
+check_http "veigapunk robots.txt" "https://veigapunk.github.io/omegag-site/robots.txt" || ec=1
 check_url "gh-pages raw (org)" "https://raw.githubusercontent.com/vgpnk-holdings-llc/omegaG/gh-pages/index.html" || ec=1
-# Legacy / optional — report but only kimi is soft-fail for now (may lag)
 check_url "org github.io" "https://vgpnk-holdings-llc.github.io/omegaG/" || ec=1
+check_http "org robots.txt (optional)" "https://vgpnk-holdings-llc.github.io/omegaG/robots.txt" || true
+# Soft-fail lagging proto host
 check_url "kimi.page (may lag)" "https://ds4cc-proto.kimi.page/" || true
 exit "$ec"
