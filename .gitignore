@@ -10,3 +10,4 @@ installer/output/
 website/tools/node_modules/
 website/tools/package-lock.json
 
+dist/
