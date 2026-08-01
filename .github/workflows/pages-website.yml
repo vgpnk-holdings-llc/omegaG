@@ -1,5 +1,9 @@
-# Deploy static marketing site (website/) to GitHub Pages.
-# Enable once: Repo Settings → Pages → Source: GitHub Actions.
+# Publish static marketing site (website/) via:
+# 1) GitHub Actions Pages (official deploy-pages) — needs Pages enabled for the repo
+# 2) Fallback: push built tree to the `gh-pages` branch (browseable / can be wired as Pages source)
+#
+# If official Pages returns "Resource not accessible by integration", an org admin must once:
+#   Settings → Pages → Source: GitHub Actions  OR  Deploy from branch `gh-pages` / (root)
 
 name: Pages (website)
 
@@ -12,7 +16,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
@@ -31,12 +35,9 @@ jobs:
       - name: Website accuracy checks
         run: node website/checks.mjs
 
-  deploy:
+  build:
     needs: check
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
       - name: Stage site root (no tools/)
@@ -44,13 +45,52 @@ jobs:
           mkdir -p _site
           cp website/index.html website/style.css website/main.js _site/
           cp -a website/assets _site/assets
+          # Optional base-path note for project Pages (root works for custom domain / apex)
+          printf '%s\n' 'website checks staged' > _site/.build-id
+          echo "${GITHUB_SHA}" >> _site/.build-id
+      - uses: actions/upload-artifact@v4
+        with:
+          name: website-static
+          path: _site
+          retention-days: 14
+
+  deploy-pages:
+    needs: build
+    runs-on: ubuntu-latest
+    # Soft-fail if org policy blocks Pages bootstrap; gh-pages job still ships files.
+    continue-on-error: true
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: website-static
+          path: _site
       - uses: actions/configure-pages@v5
         with:
-          # First-run bootstrap: create Pages site with GitHub Actions builder
-          # if none exists (fails with Not Found when Pages was never enabled).
           enablement: true
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site
       - id: deployment
         uses: actions/deploy-pages@v4
+
+  deploy-gh-pages-branch:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: website-static
+          path: _site
+      - name: Publish to gh-pages branch
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./_site
+          force_orphan: true
+          commit_message: 'deploy(website): ${{ github.sha }}'

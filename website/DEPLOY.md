@@ -47,7 +47,13 @@ Workflow: `.github/workflows/pages-website.yml`
 - If the deploy job still fails, open **Settings → Pages → Source: GitHub Actions** once (org policy can block auto-enable).
 - Expected URL: `https://vgpnk-holdings-llc.github.io/omegaG/`
 
-**Observed 2026-08-01:** first run failed on `configure-pages` with Pages not configured; fix committed (`enablement: true`). Re-run after merge to `master`.
+**Observed 2026-08-01:**
+
+| Run | Result |
+|-----|--------|
+| First | `configure-pages`: Pages site Not Found |
+| After `enablement: true` | Create Pages site **403 Resource not accessible by integration** (GITHUB_TOKEN cannot bootstrap Pages for this org/repo) |
+| Mitigation | Workflow also pushes `_site` → **`gh-pages` branch** via `peaceiris/actions-gh-pages`. Admin can set Pages source to branch `gh-pages` / root **or** GitHub Actions once. |
 
 When Pages is the primary public host, update absolute `og:*` and `canonical` in `index.html` to that origin and re-run `node website/checks.mjs` (checks pin the kimi.page origin today).
 
