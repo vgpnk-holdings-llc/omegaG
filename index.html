@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>omegaG — formerly DS4CC · controller-native agent control</title>
+  <meta name="description" content="omegaG turns a DualSense or DualShock 4 controller into a Linux and Windows shortcut mapper for terminal-first development.">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#0a0a0b">
+  <meta property="og:title" content="omegaG — formerly DS4CC">
+  <meta property="og:description" content="Turn a PlayStation controller into a shortcut mapper for terminal-first development.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://veigapunk.github.io/omegag-site/">
+  <meta property="og:image" content="https://veigapunk.github.io/omegag-site/assets/hero-journey.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="canonical" href="https://veigapunk.github.io/omegag-site/">
+  <link rel="icon" type="image/x-icon" href="assets/favicon.ico">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <!-- NAV -->
+  <nav class="nav" aria-label="Primary navigation">
+    <a href="#top" class="nav-brand">
+      <img src="assets/controller-mark.png" alt="" class="nav-mark" width="128" height="128" decoding="async">
+      <span class="nav-word">omegaG</span>
+    </a>
+    <div class="nav-links">
+      <a href="#lightbar">Lightbar</a>
+      <a href="#layer">Modifier layer</a>
+      <a href="#specs">Specs</a>
+      <a href="https://github.com/vgpnk-holdings-llc/omegaG" target="_blank" rel="noopener noreferrer">GitHub</a>
+    </div>
+    <span class="nav-tag">formerly DS4CC</span>
+  </nav>
+
+  <!-- HERO — omegaG badge (no Claude/Anthropic branding) -->
+  <main id="main">
+  <header class="hero" id="top">
+    <img src="assets/hero-journey.png" alt="omegaG — DualSense controller badge" class="hero-art" width="1280" height="720" data-animate style="--stagger:1" decoding="async">
+    <p class="hero-eyebrow" data-animate style="--stagger:2">formerly DS4CC — the shortcut mapper, preserved</p>
+    <h1 class="hero-title" data-animate style="--stagger:3">omegaG</h1>
+    <p class="hero-tagline" data-animate style="--stagger:4">Turn a PlayStation controller into a shortcut mapper for terminal-first development.</p>
+    <p class="hero-attribution" data-animate style="--stagger:5"><em>Same package and binary (<code>ds4cc</code>); Windows config path preserved — MIT attribution intact.</em></p>
+    <div class="hero-actions" data-animate style="--stagger:6">
+      <a href="https://github.com/vgpnk-holdings-llc/omegaG" class="btn-primary" target="_blank" rel="noopener noreferrer">View on GitHub</a>
+      <a href="https://github.com/VeigaPunk/DS4CC/releases/latest" class="btn-secondary" target="_blank" rel="noopener noreferrer">Windows installer (upstream)</a>
+      <a href="https://github.com/vgpnk-holdings-llc/omegaG#quick-start" class="btn-secondary" target="_blank" rel="noopener noreferrer">Linux build</a>
+    </div>
+    <p class="hero-sub" data-animate style="--stagger:7">Linux and Windows shortcut mapping &nbsp;·&nbsp; DualSense &amp; DualShock 4 — USB + Bluetooth &nbsp;·&nbsp; tmux / Claude Code keybindings &nbsp;·&nbsp; Free &amp; open source &nbsp;·&nbsp; Built with Rust</p>
+  </header>
+
+  <!-- LIGHTBAR — Work Louder RGB section, mapped to the DualSense lightbar -->
+  <section class="section" id="lightbar">
+    <p class="eyebrow">Windows-only lightbar feedback</p>
+    <h2 class="section-title">Your agents, in color.</h2>
+    <p class="section-lede">With the optional Windows-only Codex runtime enabled, six chat slots live behind the PS modifier. The controller lightbar can project the selected slot&rsquo;s state. The controls below are a website illustration of those documented states, not a live controller or HID connection.</p>
+
+    <div class="lb-stage">
+      <!-- DualSense, front view. Lightbar = the two strips flanking the touchpad. -->
+      <svg class="ds-svg" viewBox="0 0 660 460" role="img" aria-label="DualSense controller with glowing lightbar">
+        <defs>
+          <filter id="lb-blur" x="-80%" y="-80%" width="260%" height="260%">
+            <feGaussianBlur stdDeviation="10" result="b"/>
+            <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+          </filter>
+          <linearGradient id="shell" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#1b1c21"/>
+            <stop offset="1" stop-color="#0e0f12"/>
+          </linearGradient>
+        </defs>
+
+        <!-- grips -->
+        <path d="M64 96 C30 190 22 300 44 392 C52 424 84 436 106 414 C140 380 158 320 168 262 L176 214 C150 160 112 116 64 96 Z" fill="url(#shell)" stroke="#26272d" stroke-width="1.5"/>
+        <path d="M596 96 C630 190 638 300 616 392 C608 424 576 436 554 414 C520 380 502 320 492 262 L484 214 C510 160 548 116 596 96 Z" fill="url(#shell)" stroke="#26272d" stroke-width="1.5"/>
+        <!-- top shell -->
+        <path d="M64 96 C150 44 510 44 596 96 C548 116 510 160 484 214 C420 190 240 190 176 214 C150 160 112 116 64 96 Z" fill="url(#shell)" stroke="#26272d" stroke-width="1.5"/>
+
+        <!-- touchpad -->
+        <path d="M252 78 L408 78 L430 196 C400 210 260 210 230 196 Z" fill="#101116" stroke="#2b2c33" stroke-width="1.5"/>
+
+        <!-- LIGHTBAR strips (flank the touchpad) — the recolorable part -->
+        <g class="lightbar" filter="url(#lb-blur)">
+          <path class="lb-strip" d="M238 84 L226 192" stroke-width="7" stroke-linecap="round"/>
+          <path class="lb-strip" d="M422 84 L434 192" stroke-width="7" stroke-linecap="round"/>
+        </g>
+
+        <!-- d-pad -->
+        <g fill="#17181d" stroke="#2e2f36" stroke-width="1.5">
+          <rect x="118" y="226" width="26" height="66" rx="8"/>
+          <rect x="98"  y="246" width="66" height="26" rx="8"/>
+        </g>
+        <!-- face buttons -->
+        <g fill="#17181d" stroke="#2e2f36" stroke-width="1.5">
+          <circle cx="520" cy="226" r="14"/>
+          <circle cx="520" cy="274" r="14"/>
+          <circle cx="496" cy="250" r="14"/>
+          <circle cx="544" cy="250" r="14"/>
+        </g>
+        <g class="face-glyphs" fill="none" stroke="#5b5c66" stroke-width="1.6">
+          <path d="M520 219 L527 231 L513 231 Z"/>
+          <circle cx="544" cy="250" r="5.5"/>
+          <path d="M492 246 L500 254 M500 246 L492 254"/>
+          <rect x="515" y="269" width="10" height="10" rx="1.5"/>
+        </g>
+
+        <!-- sticks -->
+        <g>
+          <circle cx="268" cy="300" r="30" fill="#0c0d10" stroke="#2b2c33" stroke-width="2"/>
+          <circle cx="268" cy="300" r="17" fill="#17181d" stroke="#33343c" stroke-width="1.5"/>
+          <circle cx="392" cy="300" r="30" fill="#0c0d10" stroke="#2b2c33" stroke-width="2"/>
+          <circle cx="392" cy="300" r="17" fill="#17181d" stroke="#33343c" stroke-width="1.5"/>
+        </g>
+
+        <!-- PS + mute -->
+        <circle cx="330" cy="338" r="11" fill="#17181d" stroke="#33343c" stroke-width="1.5"/>
+        <circle cx="330" cy="386" r="8" fill="#101116" stroke="#2b2c33" stroke-width="1.5"/>
+        <circle class="mute-led" cx="330" cy="386" r="2.6"/>
+
+        <!-- state readout, etched on the shell -->
+        <text class="shell-etch" x="330" y="438" text-anchor="middle">selected slot 3 · <tspan class="etch-state">thinking</tspan></text>
+      </svg>
+
+      <!-- state chips -->
+      <div class="lb-panel">
+        <p class="demo-label">Interactive illustration</p>
+        <div class="lb-chips" role="group" aria-label="Slot states">
+          <button class="chip" type="button" aria-pressed="false" data-state="idle"            data-color="#f4f4f2"><i aria-hidden="true"></i>idle</button>
+          <button class="chip is-on" type="button" aria-pressed="true" data-state="thinking"  data-color="#3b82f6"><i aria-hidden="true"></i>thinking</button>
+          <button class="chip" type="button" aria-pressed="false" data-state="complete-unread" data-color="#34d399"><i aria-hidden="true"></i>complete&thinsp;·&thinsp;unread</button>
+          <button class="chip" type="button" aria-pressed="false" data-state="requires-input"  data-color="#f5a623"><i aria-hidden="true"></i>requires input</button>
+          <button class="chip" type="button" aria-pressed="false" data-state="error"           data-color="#ef4444"><i aria-hidden="true"></i>error</button>
+          <button class="chip" type="button" aria-pressed="false" data-state="unassigned"      data-color=""><i aria-hidden="true"></i>unassigned</button>
+        </div>
+
+        <div class="lb-slots" aria-label="Six chat slots; slot 3 selected">
+          <span class="slot" data-i="1">1</span>
+          <span class="slot" data-i="2">2</span>
+          <span class="slot is-sel" data-i="3" aria-current="true">3</span>
+          <span class="slot" data-i="4">4</span>
+          <span class="slot" data-i="5">5</span>
+          <span class="slot" data-i="6">6</span>
+        </div>
+        <p class="sr-only" role="status" aria-live="polite" aria-atomic="true">Selected slot 3 status: <span class="live-state">thinking</span></p>
+        <p class="lb-policy">slot source — <b>recent</b> · pinned · priority · custom</p>
+
+        <p class="lb-note">In the Windows runtime, a controller lightbar is lossy: it shows the <em>selected</em> slot, not six colors at once. This status projection is not available on Linux. DS4 has no player or mute LEDs.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- MODIFIER LAYER — Work Louder [01][02][03] -->
+  <section class="section" id="layer">
+    <p class="eyebrow">Optional Windows-only Codex controller runtime</p>
+    <h2 class="section-title">One modifier.<br>The whole session.</h2>
+
+    <div class="feats">
+      <div class="feat">
+        <p class="feat-num">[01]</p>
+        <div class="feat-body">
+          <h3>Hold PS for the modifier layer</h3>
+          <p>While PS is held the controller goes exclusive: L1 / R1 cycle the six chat slots, Share starts a blank thread, Options forks it, the touchpad selects — and a second press within 350&nbsp;ms activates. Release PS to return to the generic mapper: Share and Options are unmapped by default; touchpad press clicks while touchpad mode is enabled and is otherwise configurable, with no default action.</p>
+        </div>
+        <svg class="feat-glyph" viewBox="0 0 96 96" aria-hidden="true">
+          <circle cx="48" cy="48" r="30" fill="none" stroke="currentColor" stroke-width="2"/>
+          <circle cx="48" cy="48" r="30" fill="currentColor" opacity="0.08"/>
+          <text x="48" y="55" text-anchor="middle" font-size="17" fill="currentColor" font-family="JetBrains Mono, monospace">PS</text>
+          <path d="M48 6 v10 M48 80 v10 M6 48 h10 M80 48 h10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+      </div>
+
+      <div class="feat">
+        <p class="feat-num">[02]</p>
+        <div class="feat-body">
+          <h3>Core actions under your thumbs</h3>
+          <p>Cross and Circle are the one-shot accept / decline for the armed approval — nothing else can fire them. Square toggles the priority tier, Triangle sends the bounded composer, and, when a voice command is configured, L2 controls push-to-talk: a second press within 350&nbsp;ms latches hands-free, the next press stops.</p>
+        </div>
+        <svg class="feat-glyph" viewBox="0 0 96 96" aria-hidden="true">
+          <g fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="48" cy="22" r="12"/><circle cx="48" cy="74" r="12"/>
+            <circle cx="22" cy="48" r="12"/><circle cx="74" cy="48" r="12"/>
+          </g>
+          <path d="M43 17 L53 27 M53 17 L43 27" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          <circle cx="74" cy="48" r="5" fill="none" stroke="currentColor" stroke-width="2"/>
+        </svg>
+      </div>
+
+      <div class="feat">
+        <p class="feat-num">[03]</p>
+        <div class="feat-body">
+          <h3>Reasoning on the D-pad</h3>
+          <p>D-pad up / down steps through the model-advertised reasoning efforts — stay cheap on simple turns, push deeper when it counts. The right stick&rsquo;s four cardinal directions fire your configured actions behind a dead zone with hysteresis; L3 and R3 run your first command and skill.</p>
+        </div>
+        <svg class="feat-glyph" viewBox="0 0 96 96" aria-hidden="true">
+          <g fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round">
+            <path d="M40 14 h16 v26 h26 v16 h-26 v26 h-16 v-26 h-26 v-16 h26 Z"/>
+          </g>
+          <path d="M48 22 l6 8 h-12 Z" fill="currentColor"/>
+          <path d="M48 74 l6 -8 h-12 Z" fill="currentColor" opacity="0.45"/>
+        </svg>
+      </div>
+    </div>
+  </section>
+
+  <!-- DEVICE SHOT + engravings — the masterpiece, etched like the macro pad -->
+  <section class="device" id="device">
+    <div class="device-frame">
+      <img src="assets/masterpiece.png" alt="Close-up DualSense silhouette beside a pink Vibe City sign" class="device-art" width="1920" height="840" loading="lazy" decoding="async">
+      <span class="etch etch-left">omegaG&thinsp;|&thinsp;formerly DS4CC — 2026</span>
+      <span class="etch etch-right">Configured voice dictates. Controller navigates.</span>
+      <span class="etch etch-bottom">Keyboard optional when configured.</span>
+    </div>
+  </section>
+
+  <!-- SPECS — Work Louder 规格 -->
+  <section class="section" id="specs">
+    <p class="eyebrow">Specifications</p>
+    <h2 class="section-title">Specs</h2>
+
+    <dl class="spec-rows">
+      <div class="spec-row"><dt>Platform</dt><dd>Windows 10 / 11 — hidden console, tray icon. Linux: Ubuntu 22.04+ and Arch with feature-parity mapping (evdev / uinput).</dd></div>
+      <div class="spec-row"><dt>Controllers</dt><dd>DualSense and DualShock 4. USB and Bluetooth; USB takes priority, Bluetooth is the automatic fallback.</dd></div>
+      <div class="spec-row"><dt>Feedback</dt><dd>Static lightbar color and mic LED are supported by the mapper. Codex status-to-lightbar projection is an optional Windows-only feature.</dd></div>
+      <div class="spec-row"><dt>Mapping</dt><dd>Every configurable button resolves to a key combo, a chord sequence, a tmux action, a Claude Code action, or a named <code>launcher:&lt;name&gt;</code> text inject (optional Enter). No default button is pre-wired to a launcher. On DualSense, touchpad swipe moves the cursor; DualShock 4 uses left-stick mouse because coordinates are unsupported. On both controllers, touchpad press clicks while touchpad handling is enabled. Right stick scrolls, vertical + horizontal; mute toggles the system microphone.</dd></div>
+      <div class="spec-row"><dt>Detection</dt><dd>tmux and Claude Code keybindings are detected through WSL on Windows and natively on Linux. Missing pieces degrade gracefully to documented defaults.</dd></div>
+      <div class="spec-row"><dt>Codex runtime</dt><dd>Windows-only, optional, and disabled by default. It supervises a local <code>codex app-server --stdio</code>. On Linux the configuration still parses, but enabling it logs a warning and the runtime is ignored.</dd></div>
+      <div class="spec-row"><dt>Config</dt><dd>TOML. The preserved Windows path is <code>%APPDATA%\ds4cc\config.toml</code>. Linux uses <code>$XDG_CONFIG_HOME/ds4cc/config.toml</code>, falling back to <code>~/.config/ds4cc/config.toml</code> when <code>$XDG_CONFIG_HOME</code> is unset. Every setting is optional — defaults work out of the box.</dd></div>
+      <div class="spec-row"><dt>Stack</dt><dd>Rust 2024 edition, tokio, hidapi. Package and binary name remain <code>ds4cc</code>. Input read 5&nbsp;ms, output refresh 100&nbsp;ms. MIT license.</dd></div>
+    </dl>
+
+    <div class="map">
+      <p class="map-title">Default map — fixed</p>
+      <div class="map-grid">
+        <span><b>D-pad</b>arrow keys · hold to repeat</span>
+        <span><b>Right stick</b>scroll, both axes</span>
+        <span><b>Left stick / DualSense touchpad swipe</b>mouse cursor</span>
+        <span><b>Touchpad press</b>left-click on DualSense and DS4</span>
+        <span><b>L2 (hold)</b>Ctrl+Win — usable for configured push-to-talk</span>
+        <span><b>Mute</b>toggle system mic</span>
+      </div>
+      <p class="map-title">Default map — configurable</p>
+      <div class="map-grid">
+        <span><b>Cross ×</b>enter</span>
+        <span><b>Circle ○</b>escape</span>
+        <span><b>Triangle △</b>tab</span>
+        <span><b>Square □</b>tmux new-window</span>
+        <span><b>L1 / R1</b>tmux prev / next window</span>
+        <span><b>R2</b>tmux kill-window</span>
+        <span><b>L3</b>ctrl+t</span>
+        <span><b>R3</b>ctrl+u — clear line</span>
+        <span><b>Share / Options</b>unmapped</span>
+        <span><b>Touchpad button</b>unmapped when touchpad mode is disabled</span>
+      </div>
+    </div>
+  </section>
+  </main>
+
+  <!-- FOOTER -->
+  <footer class="footer" id="footer">
+    <p class="footer-mark" aria-hidden="true">omegaG</p>
+    <p class="footer-line">omegaG is a fork of <a href="https://github.com/VeigaPunk/DS4CC" target="_blank" rel="noopener noreferrer">VeigaPunk/DS4CC</a> — package and binary <code>ds4cc</code>, Windows config path preserved under MIT attribution.</p>
+    <p class="footer-links">
+      <a href="https://github.com/vgpnk-holdings-llc/omegaG" target="_blank" rel="noopener noreferrer">GitHub</a>
+      &nbsp;·&nbsp;
+      <a href="https://github.com/VeigaPunk/DS4CC/releases/latest" target="_blank" rel="noopener noreferrer">Upstream DS4CC releases</a>
+      &nbsp;·&nbsp;
+      <a href="https://github.com/vgpnk-holdings-llc/omegaG/blob/master/README.md" target="_blank" rel="noopener noreferrer">Docs</a>
+      &nbsp;·&nbsp;
+      MIT License
+      &nbsp;·&nbsp;
+      Built with Rust
+    </p>
+  </footer>
+
+  <script src="main.js"></script>
+</body>
+</html>
