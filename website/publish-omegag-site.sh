@@ -50,5 +50,6 @@ fi
 git -c user.email="deploy@omegag.local" -c user.name="omegaG-deploy" \
   commit -m "deploy(website): $(cd "$ROOT" && git rev-parse --short HEAD)"
 git push origin HEAD:main
-git push origin HEAD:gh-pages 2>/dev/null || true
-echo "pushed https://veigapunk.github.io/omegag-site/"
+# Keep gh-pages branch equal to main — some Pages configs deploy from branch, not Actions.
+git push origin HEAD:gh-pages --force
+echo "pushed https://veigapunk.github.io/omegag-site/ (main + gh-pages)"
