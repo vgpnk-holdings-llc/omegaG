@@ -38,7 +38,7 @@
     <p class="hero-eyebrow" data-animate style="--stagger:2">formerly DS4CC — the shortcut mapper, preserved</p>
     <h1 class="hero-title" data-animate style="--stagger:3">omegaG</h1>
     <p class="hero-tagline" data-animate style="--stagger:4">Turn a PlayStation controller into a shortcut mapper for terminal-first development.</p>
-    <p class="hero-attribution" data-animate style="--stagger:5"><em>Same package and binary; Windows config path preserved — MIT attribution intact.</em></p>
+    <p class="hero-attribution" data-animate style="--stagger:5"><em>Same package and binary (<code>ds4cc</code>); Windows config path preserved — MIT attribution intact.</em></p>
     <div class="hero-actions" data-animate style="--stagger:6">
        <a href="https://github.com/vgpnk-holdings-llc/omegaG" class="btn-primary" target="_blank" rel="noopener noreferrer">View on GitHub</a>
     </div>
@@ -220,7 +220,7 @@
       <div class="spec-row"><dt>Detection</dt><dd>tmux and Claude Code keybindings are detected through WSL on Windows and natively on Linux. Missing pieces degrade gracefully to documented defaults.</dd></div>
       <div class="spec-row"><dt>Codex runtime</dt><dd>Windows-only, optional, and disabled by default. It supervises a local <code>codex app-server --stdio</code>. On Linux the configuration still parses, but enabling it logs a warning and the runtime is ignored.</dd></div>
       <div class="spec-row"><dt>Config</dt><dd>TOML. The preserved Windows path is <code>%APPDATA%\ds4cc\config.toml</code>. Linux uses <code>$XDG_CONFIG_HOME/ds4cc/config.toml</code>, falling back to <code>~/.config/ds4cc/config.toml</code> when <code>$XDG_CONFIG_HOME</code> is unset. Every setting is optional — defaults work out of the box.</dd></div>
-      <div class="spec-row"><dt>Stack</dt><dd>Rust 2024 edition, tokio, hidapi. Input read 5&nbsp;ms, output refresh 100&nbsp;ms. MIT license.</dd></div>
+      <div class="spec-row"><dt>Stack</dt><dd>Rust 2024 edition, tokio, hidapi. Package and binary name remain <code>ds4cc</code>. Input read 5&nbsp;ms, output refresh 100&nbsp;ms. MIT license.</dd></div>
     </dl>
 
     <div class="map">
@@ -253,7 +253,7 @@
   <!-- FOOTER -->
   <footer class="footer" id="footer">
     <p class="footer-mark" aria-hidden="true">omegaG</p>
-    <p class="footer-line">omegaG is a fork of <a href="https://github.com/VeigaPunk/DS4CC" target="_blank" rel="noopener noreferrer">VeigaPunk/DS4CC</a> — package, binary and Windows config path preserved under MIT attribution.</p>
+    <p class="footer-line">omegaG is a fork of <a href="https://github.com/VeigaPunk/DS4CC" target="_blank" rel="noopener noreferrer">VeigaPunk/DS4CC</a> — package and binary <code>ds4cc</code>, Windows config path preserved under MIT attribution.</p>
     <p class="footer-links">
       <a href="https://github.com/vgpnk-holdings-llc/omegaG" target="_blank" rel="noopener noreferrer">GitHub</a>
       &nbsp;·&nbsp;

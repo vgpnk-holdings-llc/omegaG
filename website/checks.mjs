@@ -40,6 +40,9 @@ assert.match(html, /controller-mark\.png"[^>]*width="128" height="128"/);
 assert.match(css, /\.hero-art\s*\{[^}]*max-width:\s*100%[^}]*height:\s*auto/s);
 assert.match(css, /\.device-art\s*\{[^}]*max-width:\s*100%[^}]*height:\s*auto/s);
 assert.match(html, />Upstream DS4CC releases<\/a>/);
+assert.match(html, /Package and binary name remain <code>ds4cc<\/code>/);
+assert.match(html, /Same package and binary \(<code>ds4cc<\/code>\)/);
+assert.doesNotMatch(html, />Releases<\/a>/);
 
 for (const [, ref] of html.matchAll(/(?:src|href)="([^"#]+)"/g)) {
   if (/^[a-z][a-z\d+.-]*:/i.test(ref)) continue;
