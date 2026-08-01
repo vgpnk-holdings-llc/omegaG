@@ -22,6 +22,7 @@
   · <a href="https://github.com/vgpnk-holdings-llc/omegaG/releases/tag/website-static">static zip</a>
   · source <a href="website/"><code>website/</code></a>
   · <a href="website/DEPLOY.md">deploy</a>
+  · <code>bash website/publish-all.sh</code>
   · <a href="WEBSITE-AUDIT.md">audit</a>
 </p>
 

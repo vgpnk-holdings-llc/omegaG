@@ -1,0 +1,3 @@
+# Public marketing site — allow all crawlers.
+User-agent: *
+Allow: /

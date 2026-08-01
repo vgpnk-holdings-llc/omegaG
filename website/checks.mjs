@@ -49,6 +49,10 @@ assert.match(html, /Windows installer \(upstream\)/);
 assert.match(html, /Linux build/);
 assert.match(html, /href="https:\/\/github\.com\/VeigaPunk\/DS4CC\/releases\/latest"/);
 assert.match(html, /href="https:\/\/github\.com\/vgpnk-holdings-llc\/omegaG#quick-start"/);
+assert.match(html, /href="https:\/\/github\.com\/vgpnk-holdings-llc\/omegaG\/blob\/master\/README\.md"/);
+assert.match(html, /name="theme-color" content="#0a0a0b"/);
+// Nav GitHub link uses the same indent as sibling anchors (no stray leading space-only lag)
+assert.match(html, /<div class="nav-links">\n {6}<a href="#lightbar">[\s\S]*?\n {6}<a href="https:\/\/github\.com\/vgpnk-holdings-llc\/omegaG"/);
 
 for (const [, ref] of html.matchAll(/(?:src|href)="([^"#]+)"/g)) {
   if (/^[a-z][a-z\d+.-]*:/i.test(ref)) continue;

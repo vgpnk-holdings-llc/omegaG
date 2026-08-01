@@ -36,6 +36,7 @@ jobs:
           mkdir -p dist/website-static
           cp website/index.html website/style.css website/main.js dist/website-static/
           cp -a website/assets dist/website-static/assets
+          [[ -f website/robots.txt ]] && cp website/robots.txt dist/website-static/
           echo "${GITHUB_SHA}" > dist/website-static/.build-id
           (cd dist && zip -qr ../omegaG-website-static.zip website-static)
           ls -la omegaG-website-static.zip

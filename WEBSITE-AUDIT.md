@@ -210,4 +210,4 @@ node website/checks.mjs
 bash website/verify-live.sh
 ```
 
-**Bottom line:** Accurate omegaG site is live. Org github.io is a one-click Pages branch setting. **HALT.**
+**Bottom line:** Accurate omegaG site is live on **two** hosts (VeigaPunk mirror + org Pages). Release zip in sync. kimi optional. **HALT** on accuracy mission; polish (Docs footer, robots, theme-color) may continue without reopening P0.

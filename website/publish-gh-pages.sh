@@ -10,6 +10,7 @@ STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
 cp website/index.html website/style.css website/main.js "$STAGE/"
 cp -a website/assets "$STAGE/assets"
+[[ -f website/robots.txt ]] && cp website/robots.txt "$STAGE/"
 touch "$STAGE/.nojekyll"
 {
   git rev-parse HEAD
