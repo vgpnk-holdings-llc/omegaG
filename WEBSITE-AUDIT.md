@@ -110,32 +110,34 @@ Legend: **OK** · **LIVE-BAD** (live only) · **SOFT** · **GAP**
 
 | ID | Item | Status |
 |----|------|--------|
-| P0.1 | Redeploy live from `website/` | **Open** (host action) |
-| P0.2 | Gate publish on `node website/checks.mjs` | Process; checks **pass** |
-| P0.3 | Footer never bare “Releases” for upstream | **Fixed in `website/`**; live still wrong until P0.1 |
-| P0.4 | Codex / status lightbar marked Windows-only + illustration | **Fixed in `website/`** |
-| P0.5 | Binary/package name `ds4cc` on page | **Fixed** hero + stack + footer + checks |
-| P0.6 | Hero badge not CLAUDE branding | **Fixed** (`hero-journey.png` regen + checks) |
+| P0.1 | Accurate public HTML live | **DONE** via https://veigapunk.github.io/omegag-site/ |
+| P0.2 | Gate publish on `node website/checks.mjs` | **pass** (CI + local) |
+| P0.3 | Footer never bare “Releases” for upstream | **Fixed** (mirror + source) |
+| P0.4 | Codex / status lightbar Windows-only + illustration | **Fixed** |
+| P0.5 | Binary/package name `ds4cc` on page | **Fixed** |
+| P0.6 | Hero badge not CLAUDE branding | **Fixed** |
 
 ### P1 — polish
 
 | ID | Item | Status |
 |----|------|--------|
-| P1.1 | Absolute `og:image` / canonical URL | **Done** (points at kimi.page origin) |
-| P1.2 | Explicit Windows installer + Linux install CTAs | **Done** (hero secondary buttons) |
-| P1.3 | Rename host off `ds4cc-proto` | Open |
-| P1.4 | Compress `masterpiece.png` | **Done** (~1.4 MB → ~760 KB @ 1920w) |
-| P1.5 | Keep `website/tools/node_modules` out of deploys | Documented + Pages workflow excludes tools |
-| P1.6 | GitHub Pages workflow + `website/DEPLOY.md` | **Done** (needs Pages source enable once) |
+| P1.1 | Absolute `og:image` / canonical URL | **Done** → `veigapunk.github.io/omegag-site` |
+| P1.2 | Windows installer + Linux install CTAs | **Done** |
+| P1.3 | Rename host off `ds4cc-proto` (kimi) | Open (optional; kimi not accuracy gate) |
+| P1.4 | Compress `masterpiece.png` | **Done** |
+| P1.5 | Keep `website/tools/` out of deploys | **Done** |
+| P1.6 | GitHub Pages workflows | **Done** (org env still needs admin) |
 
-### P2 — nice-to-have
+### P2 — nice-to-have (post-HALT)
 
 | ID | Item |
 |----|------|
 | P2.1 | Market launcher actions (HIGHLIGHTS) |
-| P2.2 | Self-host or document Inter/mono fonts |
-| P2.3 | Privacy note if Kimi SDK stays on production |
+| P2.2 | Self-host Inter/mono fonts |
+| P2.3 | Privacy note if Kimi SDK stays |
 | P2.4 | Optional docs link (README/SPEC) |
+| P2.5 | Auto-sync `website/` → VeigaPunk/omegag-site on master push |
+| P2.6 | Enable org Pages Actions env → `vgpnk-holdings-llc.github.io/omegaG` |
 
 ---
 
@@ -171,12 +173,34 @@ Legend: **OK** · **LIVE-BAD** (live only) · **SOFT** · **GAP**
 
 ---
 
-## 10. Next command (human)
+## 10. Host map (do not confuse)
+
+| URL | What it is |
+|-----|------------|
+| https://veigapunk.github.io/ | **Plazir** user site (unrelated fan codex) — LIVE 200 |
+| https://veigapunk.github.io/omegag-site/ | **omegaG marketing** — LIVE accurate 200 |
+| https://vgpnk-holdings-llc.github.io/omegaG/ | Org project Pages — **404** until Actions/Pages env enabled |
+| https://ds4cc-proto.kimi.page/ | Proto marketing — **stale** (optional refresh) |
+| `gh-pages` branch on org repo | Accurate tree for org Pages once enabled |
+
+## 11. HALT — residual external only
+
+**Audit mission: HALT (success path closed for in-repo + accurate public host).**
+
+No further website accuracy work required under `website/` unless product copy changes.
+
+| Residual | Owner | Blocker |
+|----------|-------|---------|
+| Org project Pages 404 | Org admin | Enable **Settings → Pages** (Actions env or branch `gh-pages`); GITHUB_TOKEN got **403** create-site |
+| kimi.page stale | Human + Kimi UI | No publish API; zip at release `website-static` |
+| 1Password “GitHub CLI” PAT | Human | Invalid 401 — rotate if local `gh` needed |
+| Plazir vs omegaG URLs | Docs | Apex = Plazir; `/omegag-site/` = omegaG — keep distinct |
+
+**Do not** overwrite https://veigapunk.github.io/ (Plazir) with omegaG.
 
 ```bash
 node website/checks.mjs
-# Unblock P0: upload website/* to kimi.page (DEPLOY.md §A)
-# Or: enable GitHub Pages (Actions) and merge website-audit → master
+bash website/verify-live.sh   # requires veigapunk.github.io/omegag-site PASS
 ```
 
-**Bottom line:** `website/` is accurate, check-gated, and Pages-ready. **kimi.page redeploy is the remaining external P0**; local ship path is merge to `master` + Pages enable.
+**Bottom line:** Accurate omegaG site is public at **https://veigapunk.github.io/omegag-site/**. Org github.io and kimi.page are optional lagging hosts.

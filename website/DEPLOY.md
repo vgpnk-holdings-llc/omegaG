@@ -2,16 +2,19 @@
 
 Source of truth: this directory (`website/`).
 
-## Status (2026-08-01)
+## Status (2026-08-01) — audit HALT
 
 | Surface | Status |
 |---------|--------|
-| **https://veigapunk.github.io/omegag-site/** | **LIVE · accurate** (personal mirror repo [VeigaPunk/omegag-site](https://github.com/VeigaPunk/omegag-site)) |
-| Git `website/` on `master` | Accurate (checks pass) — source of truth |
-| Branch **`gh-pages`** (org) | Shipped accurate tree; org github.io still blocked (Pages 403) |
-| https://vgpnk-holdings-llc.github.io/omegaG/ | **404** — org Pages bootstrap blocked |
-| https://ds4cc-proto.kimi.page/ | **Stale** — upload zip when ready |
+| **https://veigapunk.github.io/omegag-site/** | **LIVE · accurate** ([VeigaPunk/omegag-site](https://github.com/VeigaPunk/omegag-site)) |
+| https://veigapunk.github.io/ | **Plazir** user Pages (separate product) — do not overwrite |
+| Git `website/` on `master` | Source of truth; checks pass |
+| Org `gh-pages` branch | Accurate tree ready |
+| https://vgpnk-holdings-llc.github.io/omegaG/ | **404** — enable org Actions Pages env (admin) |
+| https://ds4cc-proto.kimi.page/ | Stale (optional) |
 | Release zip | tag `website-static` |
+
+Canonical / OG in `index.html` point at `veigapunk.github.io/omegag-site/`.
 
 ## Pre-flight
 

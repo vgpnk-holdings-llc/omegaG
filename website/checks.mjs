@@ -34,9 +34,9 @@ assert.match(html, /assets\/hero-journey\.png/);
 assert.match(html, /class="hero-art"/);
 // Badge branding only — allow "Claude Code" product mentions in body copy
 assert.doesNotMatch(html, /Claude DS4\/5|["']CLAUDE["']|\bCLAUDE\b(?!\s*Code)/);
-assert.match(html, /<meta property="og:image" content="https:\/\/ds4cc-proto\.kimi\.page\/assets\/hero-journey\.png">/);
-assert.match(html, /<meta property="og:url" content="https:\/\/ds4cc-proto\.kimi\.page\/">/);
-assert.match(html, /rel="canonical" href="https:\/\/ds4cc-proto\.kimi\.page\/"/);
+assert.match(html, /<meta property="og:image" content="https:\/\/veigapunk\.github\.io\/omegag-site\/assets\/hero-journey\.png">/);
+assert.match(html, /<meta property="og:url" content="https:\/\/veigapunk\.github\.io\/omegag-site\/">/);
+assert.match(html, /rel="canonical" href="https:\/\/veigapunk\.github\.io\/omegag-site\/"/);
 assert.match(html, /masterpiece\.png"[^>]*width="1920" height="840"[^>]*loading="lazy"/);
 assert.match(html, /controller-mark\.png"[^>]*width="128" height="128"/);
 assert.match(css, /\.hero-art\s*\{[^}]*max-width:\s*100%[^}]*height:\s*auto/s);
