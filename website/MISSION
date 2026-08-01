@@ -1,0 +1,11 @@
+STATUS=CLOSED
+SCOPE=omegaG marketing website accuracy vs code/docs + dual public hosts
+CLOSED_AT=2026-08-01
+PRIMARY=https://veigapunk.github.io/omegag-site/
+ORG=https://vgpnk-holdings-llc.github.io/omegaG/
+SOURCE=website/
+GATE=node website/checks.mjs && bash website/verify-live.sh
+PUBLISH=bash website/publish-all.sh
+KIMI=optional lag only https://ds4cc-proto.kimi.page/
+PLAZIR=do not touch https://veigapunk.github.io/
+NEXT=new product scope only — no further website accuracy churn
