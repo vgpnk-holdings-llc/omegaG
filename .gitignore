@@ -5,3 +5,8 @@
 installer/output/
 /vendor-linux/
 /.xbreed
+
+# website tooling
+website/tools/node_modules/
+website/tools/package-lock.json
+
