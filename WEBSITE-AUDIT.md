@@ -135,9 +135,9 @@ Legend: **OK** · **LIVE-BAD** (live only) · **SOFT** · **GAP**
 | P2.1 | Market launcher actions (HIGHLIGHTS) | **Done** — Specs Mapping row |
 | P2.2 | Self-host Inter/mono fonts |
 | P2.3 | Privacy note if Kimi SDK stays |
-| P2.4 | Optional docs link (README/SPEC) |
+| P2.4 | Optional docs link (README/SPEC) | **Done** — footer Docs |
 | P2.5 | Auto-sync `website/` → VeigaPunk/omegag-site on master push |
-| P2.6 | Org github.io via Settings→Pages→branch `gh-pages` / | External one-click |
+| P2.6 | Org github.io via Settings→Pages→branch `gh-pages` / | **LIVE** |
 
 ---
 

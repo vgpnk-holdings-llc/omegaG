@@ -7,6 +7,8 @@ need=(
   'Upstream DS4CC releases'
   'Package and binary name remain'
   'Windows installer (upstream)'
+  'launcher:'
+  'No default button is pre-wired to a launcher'
 )
 
 check_url() {
