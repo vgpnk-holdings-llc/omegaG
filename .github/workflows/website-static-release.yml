@@ -1,0 +1,66 @@
+# Package website/ for manual hosts (kimi.page, SFTP, etc.) and publish as a
+# rolling GitHub Release tag `website-static`.
+
+name: Website static release
+
+on:
+  push:
+    branches: [master, main]
+    paths:
+      - 'website/**'
+      - '.github/workflows/website-static-release.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: website-static-release
+  cancel-in-progress: true
+
+jobs:
+  package-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Accuracy checks
+        run: node website/checks.mjs
+
+      - name: Stage package
+        run: |
+          mkdir -p dist/website-static
+          cp website/index.html website/style.css website/main.js dist/website-static/
+          cp -a website/assets dist/website-static/assets
+          echo "${GITHUB_SHA}" > dist/website-static/.build-id
+          (cd dist && zip -qr ../omegaG-website-static.zip website-static)
+          ls -la omegaG-website-static.zip
+
+      - name: Publish rolling release website-static
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: website-static
+          name: Marketing site static bundle
+          prerelease: true
+          make_latest: false
+          files: omegaG-website-static.zip
+          body: |
+            Accuracy-checked static tree from `website/` (commit `${{ github.sha }}`).
+
+            **Unpack and upload to kimi.page** (or any static host):
+
+            ```
+            unzip omegaG-website-static.zip
+            # upload website-static/*  (index.html, style.css, main.js, assets/)
+            ```
+
+            Do not upload `website/tools/`.
+
+            Source: https://github.com/${{ github.repository }}/tree/${{ github.sha }}/website
+            Live audit: `bash website/verify-live.sh`
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

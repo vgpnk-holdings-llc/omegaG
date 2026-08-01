@@ -160,13 +160,15 @@ Legend: **OK** · **LIVE-BAD** (live only) · **SOFT** · **GAP**
 | P0 site fixes under `website/` | Done (content + binary name + checks) |
 | Commit on `website-audit` | Done this pass |
 | Push `origin/website-audit` | Attempted; no force-push |
-| Live redeploy (kimi.page) | **Still stale / blocked** — no Kimi publish token; package via `dist/omegaG-website-static.tgz` (local, gitignored) |
+| Live redeploy (kimi.page) | **Still stale / blocked** — no Kimi publish token |
 | GitHub Pages (`deploy-pages`) | **403** create site — org blocks GITHUB_TOKEN bootstrap |
-| **`gh-pages` branch** | **SHIPPED** — accurate site (run `30722792411`, deploy-gh-pages-branch success) |
-| github.io URL | **404** until admin: Settings → Pages → branch `gh-pages` (or Actions) |
+| **`gh-pages` branch** | **SHIPPED** — accurate site |
+| github.io URL | **404** until admin: Settings → Pages → branch `gh-pages` |
+| **Release `website-static`** | CI packages zip for kimi/SFTP (workflow `website-static-release.yml`) |
+| **Docker** | `website/Dockerfile` nginx — local smoke OK |
+| DigitalOcean Apps | Token valid; create fails **`GitHub user not authenticated`** — link GH in DO console |
 | GitHub PAT “GitHub CLI” in 1Password | **Invalid** (401) — rotate |
-| GitHub MCP write (issues / dispatch) | **403** — git SSH push works |
-| P1 CTAs / OG / asset resize | On `master` |
+| GitHub MCP write | **403** — git SSH push works |
 
 ---
 

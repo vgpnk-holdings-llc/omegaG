@@ -11,6 +11,7 @@ Source of truth: this directory (`website/`).
 | https://vgpnk-holdings-llc.github.io/omegaG/ | **404** until an admin sets Pages source (API create = 403 for GITHUB_TOKEN) |
 | https://ds4cc-proto.kimi.page/ | **Stale** — still pre-audit marketing copy |
 | Raw tree (debug) | https://raw.githubusercontent.com/vgpnk-holdings-llc/omegaG/gh-pages/index.html |
+| Release zip | CI tag `website-static` (see below) |
 
 ## Pre-flight
 
@@ -36,6 +37,28 @@ cp -a website/assets dist/website-static/assets
 (cd dist && tar -czf omegaG-website-static.tgz website-static)
 # → dist/omegaG-website-static.tgz  (gitignored)
 ```
+
+### Rolling GitHub Release (CI)
+
+Workflow: `.github/workflows/website-static-release.yml`
+
+- Tag: **`website-static`** (prerelease, replaced each website change)
+- Asset: `omegaG-website-static.zip`
+- URL pattern: https://github.com/vgpnk-holdings-llc/omegaG/releases/tag/website-static
+
+Download → unzip → upload contents to kimi.page.
+
+### Docker (any host with a container runtime)
+
+```bash
+docker build -t omegag-website -f website/Dockerfile website
+docker run --rm -p 8080:80 omegag-website
+# open http://127.0.0.1:8080/
+```
+
+### DigitalOcean App Platform (attempted)
+
+DO API token works, but create-app returns **`GitHub user not authenticated`**. Link GitHub under DO → Apps → Create → GitHub, then a static site from branch `gh-pages` will deploy. Not automated from this workspace.
 
 ---
 
