@@ -110,6 +110,8 @@ Verify branch content anytime:
 
 ```bash
 curl -sL https://raw.githubusercontent.com/vgpnk-holdings-llc/omegaG/gh-pages/index.html | head
+# or after local checks:
+bash website/publish-gh-pages.sh   # force-sync website/ → origin/gh-pages via SSH
 ```
 
 Primary public URL remains https://veigapunk.github.io/omegag-site/ until org Pages is toggled (optional). Canonical/OG already point at the VeigaPunk mirror.
