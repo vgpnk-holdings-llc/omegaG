@@ -51,6 +51,8 @@ assert.match(html, /href="https:\/\/github\.com\/VeigaPunk\/DS4CC\/releases\/lat
 assert.match(html, /href="https:\/\/github\.com\/vgpnk-holdings-llc\/omegaG#quick-start"/);
 assert.match(html, /href="https:\/\/github\.com\/vgpnk-holdings-llc\/omegaG\/blob\/master\/README\.md"/);
 assert.match(html, /name="theme-color" content="#0a0a0b"/);
+assert.match(html, /launcher:&lt;name&gt;/);
+assert.match(html, /No default button is pre-wired to a launcher/);
 // Nav GitHub link uses the same indent as sibling anchors (no stray leading space-only lag)
 assert.match(html, /<div class="nav-links">\n {6}<a href="#lightbar">[\s\S]*?\n {6}<a href="https:\/\/github\.com\/vgpnk-holdings-llc\/omegaG"/);
 

@@ -132,7 +132,7 @@ Legend: **OK** · **LIVE-BAD** (live only) · **SOFT** · **GAP**
 
 | ID | Item |
 |----|------|
-| P2.1 | Market launcher actions (HIGHLIGHTS) |
+| P2.1 | Market launcher actions (HIGHLIGHTS) | **Done** — Specs Mapping row |
 | P2.2 | Self-host Inter/mono fonts |
 | P2.3 | Privacy note if Kimi SDK stays |
 | P2.4 | Optional docs link (README/SPEC) |
