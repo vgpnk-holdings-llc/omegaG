@@ -119,13 +119,14 @@ Legend: **OK** · **LIVE-BAD** (live only) · **SOFT** · **GAP**
 
 ### P1 — polish
 
-| ID | Item |
-|----|------|
-| P1.1 | Absolute `og:image` / canonical URL |
-| P1.2 | Explicit Windows installer + Linux install CTAs |
-| P1.3 | Rename host off `ds4cc-proto` |
-| P1.4 | Compress `masterpiece.png` (~1.4 MB) |
-| P1.5 | Keep `website/tools/node_modules` out of deploys |
+| ID | Item | Status |
+|----|------|--------|
+| P1.1 | Absolute `og:image` / canonical URL | **Done** (points at kimi.page origin) |
+| P1.2 | Explicit Windows installer + Linux install CTAs | **Done** (hero secondary buttons) |
+| P1.3 | Rename host off `ds4cc-proto` | Open |
+| P1.4 | Compress `masterpiece.png` | **Done** (~1.4 MB → ~760 KB @ 1920w) |
+| P1.5 | Keep `website/tools/node_modules` out of deploys | Documented + Pages workflow excludes tools |
+| P1.6 | GitHub Pages workflow + `website/DEPLOY.md` | **Done** (needs Pages source enable once) |
 
 ### P2 — nice-to-have
 
@@ -159,7 +160,9 @@ Legend: **OK** · **LIVE-BAD** (live only) · **SOFT** · **GAP**
 | P0 site fixes under `website/` | Done (content + binary name + checks) |
 | Commit on `website-audit` | Done this pass |
 | Push `origin/website-audit` | Attempted; no force-push |
-| Live redeploy | **Not done** (no kimi publish credentials in this workflow) |
+| Live redeploy (kimi.page) | **Blocked** — no Kimi publish token/UI in workspace; see `website/DEPLOY.md` |
+| GitHub Pages workflow | Added `.github/workflows/pages-website.yml` — enable Pages → GitHub Actions once |
+| P1 CTAs / OG / asset resize | Landed on `website-audit` |
 
 ---
 
@@ -167,8 +170,8 @@ Legend: **OK** · **LIVE-BAD** (live only) · **SOFT** · **GAP**
 
 ```bash
 node website/checks.mjs
-# Upload website/{index.html,style.css,main.js,assets/*} to kimi.page
-# Verify live: Windows-only + Upstream DS4CC + omegaG hero (not CLAUDE)
+# Unblock P0: upload website/* to kimi.page (DEPLOY.md §A)
+# Or: enable GitHub Pages (Actions) and merge website-audit → master
 ```
 
-**Bottom line:** `website/` is accurate and check-gated. **Ship it to kimi.page** to close P0 for real users.
+**Bottom line:** `website/` is accurate, check-gated, and Pages-ready. **kimi.page redeploy is the remaining external P0**; local ship path is merge to `master` + Pages enable.

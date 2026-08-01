@@ -1,0 +1,52 @@
+# Deploy static marketing site (website/) to GitHub Pages.
+# Enable once: Repo Settings → Pages → Source: GitHub Actions.
+
+name: Pages (website)
+
+on:
+  push:
+    branches: [master, main]
+    paths:
+      - 'website/**'
+      - '.github/workflows/pages-website.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages-website
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Website accuracy checks
+        run: node website/checks.mjs
+
+  deploy:
+    needs: check
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Stage site root (no tools/)
+        run: |
+          mkdir -p _site
+          cp website/index.html website/style.css website/main.js _site/
+          cp -a website/assets _site/assets
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -34,8 +34,10 @@ assert.match(html, /assets\/hero-journey\.png/);
 assert.match(html, /class="hero-art"/);
 // Badge branding only — allow "Claude Code" product mentions in body copy
 assert.doesNotMatch(html, /Claude DS4\/5|["']CLAUDE["']|\bCLAUDE\b(?!\s*Code)/);
-assert.match(html, /<meta property="og:image" content="assets\/hero-journey\.png">/);
-assert.match(html, /masterpiece\.png"[^>]*width="2720" height="1190"[^>]*loading="lazy"/);
+assert.match(html, /<meta property="og:image" content="https:\/\/ds4cc-proto\.kimi\.page\/assets\/hero-journey\.png">/);
+assert.match(html, /<meta property="og:url" content="https:\/\/ds4cc-proto\.kimi\.page\/">/);
+assert.match(html, /rel="canonical" href="https:\/\/ds4cc-proto\.kimi\.page\/"/);
+assert.match(html, /masterpiece\.png"[^>]*width="1920" height="840"[^>]*loading="lazy"/);
 assert.match(html, /controller-mark\.png"[^>]*width="128" height="128"/);
 assert.match(css, /\.hero-art\s*\{[^}]*max-width:\s*100%[^}]*height:\s*auto/s);
 assert.match(css, /\.device-art\s*\{[^}]*max-width:\s*100%[^}]*height:\s*auto/s);
@@ -43,6 +45,10 @@ assert.match(html, />Upstream DS4CC releases<\/a>/);
 assert.match(html, /Package and binary name remain <code>ds4cc<\/code>/);
 assert.match(html, /Same package and binary \(<code>ds4cc<\/code>\)/);
 assert.doesNotMatch(html, />Releases<\/a>/);
+assert.match(html, /Windows installer \(upstream\)/);
+assert.match(html, /Linux build/);
+assert.match(html, /href="https:\/\/github\.com\/VeigaPunk\/DS4CC\/releases\/latest"/);
+assert.match(html, /href="https:\/\/github\.com\/vgpnk-holdings-llc\/omegaG#quick-start"/);
 
 for (const [, ref] of html.matchAll(/(?:src|href)="([^"#]+)"/g)) {
   if (/^[a-z][a-z\d+.-]*:/i.test(ref)) continue;
