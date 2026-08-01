@@ -1,32 +1,23 @@
 # WEBSITE-AUDIT — omegaG product site
 
-**Date:** 2026-08-01 (updated same day)  
-**Live URL:** https://ds4cc-proto.kimi.page/  
-**In-repo site:** `website/`  
-**Mirror snapshot:** `~/Projects/omegag-site/` (`index.fetched.html`, CSS/JS/assets)  
-**Repo truth:** `README.md`, `SPEC.md`, `HIGHLIGHTS.md`, `src/` (package name `ds4cc`)  
-**Checks:** `node website/checks.mjs` → **pass**  
-**Branch:** `website-audit` (includes hero rebrand from `website-hero-omegag`)
+**Date:** 2026-08-01 · **Status: MISSION CLOSED**  
+**Primary live (accurate):** https://veigapunk.github.io/omegag-site/  
+**Org live (accurate):** https://vgpnk-holdings-llc.github.io/omegaG/  
+**Proto (optional lag):** https://ds4cc-proto.kimi.page/  
+**Source:** `website/` · **Checks:** `node website/checks.mjs` + `bash website/verify-live.sh`  
+**Repo truth:** `README.md`, `SPEC.md`, `HIGHLIGHTS.md`, `src/` (package/binary `ds4cc`)
+
+> **Do not treat kimi.page as the accuracy gate.** Required public hosts are the two GitHub Pages URLs above; both pass fingerprints including Windows-only Codex/lightbar, launcher, and robots.txt.
 
 ---
 
 ## 1. What the site is
 
-A single-page dark marketing site for **omegaG** (fork / rebrand of **DS4CC**): DualSense / DualShock 4 → terminal-first shortcut mapper (tmux, Claude Code keybindings, mouse/scroll/mic), with an optional **Windows-only Codex controller runtime** (PS modifier layer, six chat slots, selected-slot lightbar status).
+A single-page dark marketing site for **omegaG** (fork / rebrand of **DS4CC**): DualSense / DualShock 4 → terminal-first shortcut mapper (tmux, Claude Code keybindings, mouse/scroll/mic, `launcher:<name>` injects), with an optional **Windows-only Codex controller runtime** (PS modifier layer, six chat slots, selected-slot lightbar status).
 
-Structure:
+Structure: Nav · Hero · Lightbar (illustration) · Modifier layer · Device art · Specs + default maps · Footer (upstream DS4CC releases, Docs).
 
-| Block | Role |
-|--------|------|
-| Nav | Brand omegaG, anchors Lightbar / Modifier layer / Specs, GitHub, “formerly DS4CC” |
-| Hero | `hero-journey.png` omegaG badge + tagline + GitHub CTA |
-| Lightbar | DualSense SVG demo + state chips (**illustration**, not HID) |
-| Modifier layer | [01]–[03] PS exclusive semantics (Windows Codex runtime) |
-| Device | `masterpiece.png` + etch lines |
-| Specs | Platform / controllers / feedback / mapping / detection / Codex / config / stack + default maps |
-| Footer | Fork attribution, MIT, **Upstream DS4CC releases** |
-
-Stack: static HTML + CSS + small vanilla JS. Optional local tooling under `website/tools/` (Puppeteer screenshots; `node_modules` gitignored). Hosted today on **kimi.page** (Cloudflare; live injects `https://www.kimi.com/sdk-seed.js`).
+Stack: static HTML/CSS/vanilla JS. Publish: `bash website/publish-all.sh` (org `gh-pages` + VeigaPunk mirror). CI: Pages workflow + `website-static` release zip.
 
 ---
 
@@ -34,11 +25,13 @@ Stack: static HTML + CSS + small vanilla JS. Optional local tooling under `websi
 
 | Source | Verdict |
 |--------|---------|
-| **Live `ds4cc-proto.kimi.page`** | **Still stale (P0 deploy).** Overstates Codex/lightbar as general product; Windows-centric hero strip; incomplete config/detection; footer “Releases” → upstream DS4CC without “upstream”; Kimi SDK. Snapshot: `~/Projects/omegag-site/index.fetched.html`. |
-| **In-repo `website/`** | **Accuracy source of truth.** Codex/lightbar Windows-only; illustration disclaimer; XDG config; DualSense vs DS4 touchpad; detection WSL vs native; Share/Options unmapped; binary name `ds4cc` called out; hero badge rebranded to omegaG (not Claude). Guarded by `checks.mjs`. |
-| **README / SPEC / src** | Align with **`website/`**, not live. Package/binary/config dir remain **`ds4cc`**. Codex + status→lightbar **Windows-only**. Six slots, 350 ms activate/PTT latch, 500 ms pulse, brightness, 180 s sleep in `codex_micro` / README. |
+| **https://veigapunk.github.io/omegag-site/** | **LIVE · accurate** (mirror of `website/`) |
+| **https://vgpnk-holdings-llc.github.io/omegaG/** | **LIVE · accurate** (`gh-pages` / Actions stage) |
+| **In-repo `website/`** | **Source of truth** — Windows-only Codex/lightbar; XDG config; DualSense vs DS4 touchpad; launcher; binary `ds4cc`; checks.mjs |
+| **README / SPEC / src** | Align with `website/` |
+| **kimi.page** | Optional stale proto — not required |
 
-**Primary remaining P0 for users:** redeploy live from `website/`. Content under `website/` is publish-ready.
+**No remaining accuracy P0.**
 
 ---
 
