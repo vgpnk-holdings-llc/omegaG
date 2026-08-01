@@ -18,6 +18,7 @@
 <p align="center">
   <a href="https://ds4cc-proto.kimi.page/">Product site (kimi.page — may lag)</a>
   · accurate tree on <a href="https://github.com/vgpnk-holdings-llc/omegaG/tree/gh-pages"><code>gh-pages</code></a>
+  · <a href="https://github.com/vgpnk-holdings-llc/omegaG/releases/tag/website-static">static zip</a>
   · source <a href="website/"><code>website/</code></a>
   · <a href="website/DEPLOY.md">deploy</a>
   · <a href="WEBSITE-AUDIT.md">audit</a>
