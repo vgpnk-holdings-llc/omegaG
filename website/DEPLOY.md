@@ -65,3 +65,20 @@ When Pages is the primary public host, update absolute `og:*` and `canonical` in
 cd website && python3 -m http.server 8765
 # open http://127.0.0.1:8765/
 ```
+
+## B. GitHub Pages via `gh-pages` branch (fallback)
+
+CI may push static files to branch `gh-pages` when the Pages REST API is unavailable.
+
+**Human enable once:**
+
+1. Repo **Settings → Pages**
+2. **Build and deployment → Source → Deploy from a branch**
+3. Branch: **`gh-pages`** / folder: **`/`** (root)
+4. Save → site at `https://vgpnk-holdings-llc.github.io/omegaG/`
+
+Verify content before enable:
+
+```bash
+curl -sI https://raw.githubusercontent.com/vgpnk-holdings-llc/omegaG/gh-pages/index.html
+```
