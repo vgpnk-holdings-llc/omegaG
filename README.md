@@ -16,8 +16,8 @@
 </p>
 
 <p align="center">
-  <a href="https://veigapunk.github.io/omegag-site/"><b>Product site</b></a>
-  · <a href="https://vgpnk-holdings-llc.github.io/omegaG/">org Pages</a>
+  <a href="https://veigapunk.github.io/omegag-site/"><b>Product site (primary)</b></a>
+  · <a href="https://vgpnk-holdings-llc.github.io/omegaG/">org Pages (docs mirror)</a>
   · <a href="https://ds4cc-proto.kimi.page/">kimi.page (may lag)</a>
   · <a href="https://github.com/vgpnk-holdings-llc/omegaG/releases/tag/website-static">static zip</a>
   · source <a href="website/"><code>website/</code></a>
@@ -25,6 +25,11 @@
   · <code>bash website/publish-all.sh</code>
   · <a href="WEBSITE-AUDIT.md">audit</a>
 </p>
+
+> **Primary site:** always link users to
+> [https://veigapunk.github.io/omegag-site/](https://veigapunk.github.io/omegag-site/)
+> first. Holdings org Pages and release assets are secondary docs/mirrors only —
+> do not treat the holdings remote as the product homepage.
 
 ---
 
