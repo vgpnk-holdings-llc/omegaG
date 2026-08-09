@@ -76,7 +76,11 @@ The runtime is disabled by default and cannot consume legacy controls unless
 **Windows**
 
 1. Download **[DS4CC-Setup.exe](https://github.com/VeigaPunk/DS4CC/releases/latest)** and run it
-2. Plug in your controller — done
+2. When asked, leave **LordOfMice hidusbf** checked unless you opt out — optional USB HID
+   buffering / overclock ([LordOfMice/hidusbf](https://github.com/LordOfMice/hidusbf));
+   helpful for DualSense/DS4 latency (community ballpark: DS4 without tooling can sit in a
+   ~200 ms class lag regime; DualSense with high-rate polling can reach sub‑ms order)
+3. Plug in your controller — done
 
 **Linux (Ubuntu / Arch)**
 

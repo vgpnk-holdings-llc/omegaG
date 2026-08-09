@@ -10,6 +10,10 @@
 #define MyAppURL       "https://github.com/VeigaPunk/DS4CC"
 #define MyAppExe       "ds4cc.exe"
 #define WisprURL       "https://ref.wisprflow.ai/vgpnk"
+; LordOfMice HID USB filter / buffering overclock (hidusbf) — optional companion
+; for DualShock 4 / DualSense polling. Opens the official project after install
+; when the task is left checked (opt-out). Not bundled; third-party driver install.
+#define LordOfMiceURL  "https://github.com/LordOfMice/hidusbf"
 
 ; ── Setup ──────────────────────────────────────────────────────────────
 [Setup]
