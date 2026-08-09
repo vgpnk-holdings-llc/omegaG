@@ -8,7 +8,7 @@
 //!
 //! | Windows item                        | Linux item                                              |
 //! |-------------------------------------|---------------------------------------------------------|
-//! | Open Wispr Flow                     | "Open hyprwhspr (free Whisper …)" when discovered/set   |
+//! | Open Wispr Flow                     | "Open voice app" — only when `[voice] app_command` set  |
 //! | Restart                             | Restart (re-exec `current_exe`, exec(2) replace)        |
 //! | Check for Update                    | same (update.rs Linux flow)                             |
 //! | Enable auto start-up  [checkmark]   | same, via `platform::autostart`                         |
@@ -111,8 +111,8 @@ struct Ds4ccTray {
     stick_mode: bool,
     /// Mirrored autostart state for the menu checkmark.
     autostart_enabled: bool,
-    /// Resolved free STT / voice app; `None` hides the tray item.
-    voice_app: Option<crate::voice_backend::ResolvedVoiceApp>,
+    /// `[voice] app_command` from config; `None` hides "Open voice app".
+    voice_app_command: Option<String>,
 }
 
 impl Ds4ccTray {
@@ -121,7 +121,7 @@ impl Ds4ccTray {
             stick_mode: mouse_stick_active.load(Ordering::Relaxed),
             mouse_stick_active,
             autostart_enabled: crate::platform::autostart_is_enabled(),
-            voice_app: resolve_voice_menu(),
+            voice_app_command: voice_app_command(),
         }
     }
 
@@ -148,10 +148,11 @@ impl Ds4ccTray {
     }
 }
 
-/// Resolve free hyprwhspr / explicit voice app for the tray menu.
-fn resolve_voice_menu() -> Option<crate::voice_backend::ResolvedVoiceApp> {
+/// Read `[voice] app_command` from the config; empty/missing → `None`.
+fn voice_app_command() -> Option<String> {
     let cfg = crate::config::Config::load();
-    crate::voice_backend::resolve_voice_app(&cfg.voice)
+    let cmd = cfg.voice.app_command.trim();
+    (!cmd.is_empty()).then(|| cmd.to_string())
 }
 
 /// Restart in place: re-exec the current binary (exec(2) replaces the
@@ -174,20 +175,14 @@ fn restart_app() {
     log::error!("Failed to re-exec {}: {err}", exe.display());
 }
 
-/// Launch the configured / discovered voice app via `launcher::launch_voice_app`
+/// Launch the configured voice app via `launcher::launch_voice_app`
 /// (argv split, no shell, spawn failures logged and non-fatal).
 /// Surfaces a desktop notification on failure so the click isn't silent.
-fn open_voice_app(app: &crate::voice_backend::ResolvedVoiceApp) {
-    log::info!("{}", crate::voice_backend::credit_line());
-    if app.from_hyprwhspr_discover {
-        log::info!(
-            "Launching free STT: hyprwhspr-rs (better-slop) based on hyprwhspr (goodroot)"
-        );
-    }
-    if !crate::launcher::launch_voice_app(&app.command) {
+fn open_voice_app(cmd: &str) {
+    if !crate::launcher::launch_voice_app(cmd) {
         notify(
             "DS4CC",
-            "Could not launch the voice / STT app — install with packaging/linux/install-voice-hyprwhspr.sh",
+            "Could not launch the configured voice app — see log.",
         );
     }
 }
@@ -249,13 +244,12 @@ impl ksni::Tray for Ds4ccTray {
     fn menu(&self) -> Vec<MenuItem<Self>> {
         let mut items: Vec<MenuItem<Self>> = Vec::new();
 
-        // Free STT (hyprwhspr-rs) or explicit `[voice] app_command`.
-        if let Some(app) = self.voice_app.clone() {
-            let label = app.label.clone();
+        // Open voice app — only when `[voice] app_command` is configured.
+        if let Some(cmd) = self.voice_app_command.clone() {
             items.push(
                 StandardItem {
-                    label,
-                    activate: Box::new(move |_: &mut Self| open_voice_app(&app)),
+                    label: "Open voice app".into(),
+                    activate: Box::new(move |_: &mut Self| open_voice_app(&cmd)),
                     ..Default::default()
                 }
                 .into(),

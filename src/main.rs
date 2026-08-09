@@ -23,7 +23,6 @@ mod state;
 mod tmux_detect;
 mod tray;
 mod update;
-mod voice_backend;
 // wsl.rs carries an inner #![cfg(windows)] — compiled out on Linux.
 mod wsl;
 

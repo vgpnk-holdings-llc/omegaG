@@ -26,58 +26,23 @@ pub struct Config {
     pub voice: VoiceConfig,
 }
 
-/// Optional voice-app integration (speech-to-text dictation).
+/// Optional voice-app integration.
 ///
-/// Linux free path is built on **hyprwhspr-rs** (Rust port of goodroot's
-/// hyprwhspr) + local OpenAI Whisper models via whisper.cpp — a free,
-/// offline alternative to commercial Wispr Flow. See `CREDITS.md`.
-///
-/// - `app_command`: explicit argv to spawn from the tray (no shell). Empty
-///   + `auto_discover = true` → look for `hyprwhspr-rs` on PATH / known paths.
-/// - Windows keeps the built-in Wispr Flow tray item; this section is still
-///   parseable but the Windows tray ignores it.
+/// `app_command` names an external voice app to launch from the tray
+/// ("Open voice app"). Used on Linux; ignored on Windows (which keeps the
+/// built-in Wispr Flow integration). Empty = feature disabled.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct VoiceConfig {
-    /// Explicit command for the tray ("Open free STT…"). Empty = auto-discover
-    /// when `auto_discover` is true. Spawned without a shell.
+    /// Absolute argv-style command is NOT split here — launcher/tray code
+    /// spawns it without a shell. Empty string = unset.
     pub app_command: String,
-    /// Backend id for docs / installers: `hyprwhspr-rs` (default free path)
-    /// or `external` when you only set `app_command` yourself.
-    pub backend: String,
-    /// OpenAI Whisper model size for the free local stack (`tiny` … `large-v3`).
-    /// Installer / hyprwhspr-rs config defaults to **medium**.
-    pub whisper_model: String,
-    /// When `app_command` is empty, search for hyprwhspr-rs on PATH and
-    /// well-known install locations (`~/.cargo/bin`, `~/.local/bin`).
-    pub auto_discover: bool,
-    /// Optional tray label override. Empty → derived from backend
-    /// (`Open hyprwhspr (free STT)` for the free path).
-    pub tray_label: String,
 }
 
 impl Default for VoiceConfig {
     fn default() -> Self {
         Self {
             app_command: String::new(),
-            backend: "hyprwhspr-rs".into(),
-            whisper_model: "medium".into(),
-            auto_discover: true,
-            tray_label: String::new(),
-        }
-    }
-}
-
-impl VoiceConfig {
-    /// Normalize free-stack fields after load.
-    pub fn normalize(&mut self) {
-        let b = self.backend.trim();
-        if b.is_empty() {
-            self.backend = "hyprwhspr-rs".into();
-        }
-        let m = self.whisper_model.trim();
-        if m.is_empty() {
-            self.whisper_model = "medium".into();
         }
     }
 }
@@ -391,7 +356,6 @@ impl Config {
                     log::info!("Loaded config from {}", config_path.display());
                     Self::merge_default_launchers(&mut config.launchers);
                     config.codex_micro.normalize();
-                    config.voice.normalize();
                     #[cfg(target_os = "linux")]
                     if config.codex_micro.enabled {
                         log::warn!(
@@ -567,13 +531,9 @@ mod tests {
     }
 
     #[test]
-    fn voice_section_defaults_to_hyprwhspr_free_stack() {
+    fn voice_section_defaults_to_empty() {
         let config: Config = toml::from_str("").unwrap();
         assert_eq!(config.voice.app_command, "");
-        assert_eq!(config.voice.backend, "hyprwhspr-rs");
-        assert_eq!(config.voice.whisper_model, "medium");
-        assert!(config.voice.auto_discover);
-        assert_eq!(config.voice.tray_label, "");
     }
 
     #[test]
@@ -586,26 +546,6 @@ mod tests {
         )
         .unwrap();
         assert_eq!(config.voice.app_command, "/usr/bin/wispr-flow");
-        // Unset fields keep free-stack defaults for installers / docs.
-        assert_eq!(config.voice.backend, "hyprwhspr-rs");
-        assert_eq!(config.voice.whisper_model, "medium");
-    }
-
-    #[test]
-    fn deserialize_voice_hyprwhspr_fields() {
-        let mut config: Config = toml::from_str(
-            r#"
-            [voice]
-            backend = "hyprwhspr-rs"
-            whisper_model = "medium"
-            auto_discover = true
-            tray_label = "Open free STT"
-            "#,
-        )
-        .unwrap();
-        config.voice.normalize();
-        assert_eq!(config.voice.whisper_model, "medium");
-        assert_eq!(config.voice.tray_label, "Open free STT");
     }
 
     #[test]

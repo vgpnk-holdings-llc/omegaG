@@ -52,10 +52,10 @@ pub fn builtin_action(name: &str) -> Option<LauncherAction> {
 
 // ── Voice app launching (Linux) ───────────────────────────────────────
 //
-// The Windows tray has "Open Wispr Flow" (a Windows exe). On Linux the free
-// path is hyprwhspr-rs (better-slop; original idea: goodroot/hyprwhspr) +
-// local Whisper — see `voice_backend` and CREDITS.md. The tray resolves
-// discovery or `[voice] app_command`, then calls this. No shell: argv only.
+// The Windows tray has "Open Wispr Flow" (a Windows exe). On Linux there is
+// no bundled voice app: the user points `[voice] app_command` at whatever
+// they use, and the tray's "Open voice app" item calls this. No shell is
+// involved — the command string is split into argv and spawned directly.
 
 /// Spawn the configured voice app from `[voice] app_command`.
 ///
