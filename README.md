@@ -44,7 +44,15 @@ the proven DS4CC shortcut mapper and its simple defaults.
 
 OmegaG is a fork of [VeigaPunk/DS4CC](https://github.com/VeigaPunk/DS4CC).
 It preserves the `ds4cc` package, binary, configuration path, and MIT attribution
-for compatibility. The daemon runs in the system tray on **Windows and Linux**
+for compatibility.
+
+**Controller foundation:** DualSense / DualShock HID knowledge — report layouts,
+Bluetooth extended mode, lightbar / player LEDs / mute LED, CRC — is grounded in
+the work of **[@Ryochan7](https://github.com/Ryochan7)** and
+[**DS4Windows**](https://github.com/Ryochan7/DS4Windows). That research is the
+base this daemon is built on. See [CREDITS.md](CREDITS.md).
+
+The daemon runs in the system tray on **Windows and Linux**
 (Ubuntu / Arch, USB **and** Bluetooth) and lets your controller:
 
 - **Send keystrokes** — every button maps to a key combo or chord sequence
@@ -530,6 +538,11 @@ plus the optional:
 app_command = ""   # e.g. "wispr-flow" — adds "Open voice app" to the tray
 ```
 
+## Acknowledgments
+
+- **[@Ryochan7](https://github.com/Ryochan7)** / [DS4Windows](https://github.com/Ryochan7/DS4Windows) — DualShock 4 & DualSense HID research and tooling that made this project possible. Full note in [CREDITS.md](CREDITS.md).
+
 ## License
 
 MIT
+

@@ -259,19 +259,19 @@ impl Default for TmuxConfig {
     }
 }
 
-/// Left stick as mouse cursor configuration.
+/// Left stick as **precise** mouse cursor control.
 ///
-/// When enabled, deflecting the left analog stick moves the mouse cursor.
-/// Speed is proportional to deflection; a sub-pixel accumulator ensures smooth
-/// movement even at low sensitivity values.
+/// Runs alongside the touchpad (fast swipe). Stick uses a soft response curve
+/// near center so small deflections move the cursor slowly; max pixels/frame
+/// stays low by default.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct StickMouseConfig {
     /// Enable left stick cursor control.
     pub enabled: bool,
-    /// Max pixels per input frame at full deflection. Default: 8.0.
+    /// Max pixels per input frame at full deflection. Default: 7.0 (high).
     pub sensitivity: f32,
-    /// Dead zone radius around center (0-127). Default: 15.
+    /// Dead zone radius around center (0-127). Default: 6.
     pub dead_zone: u8,
 }
 
@@ -279,23 +279,23 @@ impl Default for StickMouseConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            sensitivity: 8.0,
-            dead_zone: 15,
+            sensitivity: 7.0,
+            dead_zone: 6,
         }
     }
 }
 
-/// Touchpad-as-mouse configuration.
+/// Touchpad as **fast** mouse cursor control.
 ///
-/// When enabled, sliding a finger on the DualSense touchpad moves the cursor,
-/// and pressing (clicking) the touchpad sends a left mouse button click.
+/// Swipe scales more aggressively than the stick. Physical press still uses
+/// `[buttons].touchpad` (or left-click when that string is empty).
 /// DS4 touchpad coordinates are not yet supported.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct TouchpadConfig {
-    /// Enable touchpad cursor control. Set false to use the touchpad button in tmux mappings.
+    /// Enable touchpad cursor control. Set false to use only stick / button maps.
     pub enabled: bool,
-    /// Cursor speed multiplier. 1.0 = raw touchpad units → pixels 1:1. Default 1.5.
+    /// Cursor speed multiplier on raw pad deltas. Default 10.0 (very fast).
     pub sensitivity: f32,
 }
 
@@ -303,7 +303,7 @@ impl Default for TouchpadConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            sensitivity: 1.5,
+            sensitivity: 10.0,
         }
     }
 }

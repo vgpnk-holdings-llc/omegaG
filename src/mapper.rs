@@ -529,9 +529,9 @@ pub struct MapperState {
     stick_mouse_dead_zone: i16,
     stick_acc_x: f32,
     stick_acc_y: f32,
-    // Mouse mode toggle: shared with tray thread.
-    // false = touchpad touch moves cursor; true = left stick moves cursor.
-    // Touchpad click (press) fires regardless of mode.
+    // Tray can mute stick mouse (`false` = stick off). Touchpad swipe is
+    // independent: both can drive the cursor when each is enabled (fast pad +
+    // precise stick). Default true so DualSense gets both out of the box.
     mouse_stick_active: Arc<AtomicBool>,
     // Touchpad-as-mouse state
     prev_touch: Option<(u16, u16)>,
@@ -560,7 +560,7 @@ impl Default for MapperState {
             stick_mouse_dead_zone: 15,
             stick_acc_x: 0.0,
             stick_acc_y: 0.0,
-            mouse_stick_active: Arc::new(AtomicBool::new(false)),
+            mouse_stick_active: Arc::new(AtomicBool::new(true)),
             prev_touch: None,
             touchpad_enabled: true,
             touchpad_sensitivity: 1.5,
@@ -822,43 +822,47 @@ impl MapperState {
         }
     }
 
-    /// Translate touchpad *swipe* coordinates into relative mouse movement.
+    /// Translate touchpad *swipe* into **fast** relative mouse movement.
     ///
-    /// The physical touchpad **press** is handled in [`MapperState::update`]:
-    /// a non-empty `[buttons].touchpad` mapping takes priority; otherwise a
-    /// left-click is emitted when touchpad cursor mode is enabled.
+    /// Independent of the left stick (precise). Physical **press** is handled
+    /// in [`MapperState::update`] via the profile button map / click fallback.
     fn process_touchpad(&mut self, input: &UnifiedInput, actions: &mut Vec<Action>) {
         if !self.touchpad_enabled {
             return; // config-level disable: suppresses swipe movement
         }
 
-        // ── Touch movement: only in touchpad mode (not when left stick drives cursor) ──
-        let stick_active = self.mouse_stick_active.load(Ordering::Relaxed);
         let tp = &input.touchpad[0];
-        if tp.active && !stick_active {
+        if tp.active {
             if let Some((px, py)) = self.prev_touch {
                 let raw_dx = tp.x as i32 - px as i32;
                 let raw_dy = tp.y as i32 - py as i32;
                 let dx = (raw_dx as f32 * self.touchpad_sensitivity) as i32;
                 let dy = (raw_dy as f32 * self.touchpad_sensitivity) as i32;
                 if dx != 0 || dy != 0 {
-                    log::debug!("TouchpadMove raw=({raw_dx},{raw_dy}) scaled=({dx},{dy})");
+                    log::debug!("TouchpadMove(fast) raw=({raw_dx},{raw_dy}) scaled=({dx},{dy})");
                     actions.push(Action::MouseMove { dx, dy });
                 }
             }
             self.prev_touch = Some((tp.x, tp.y));
         } else {
-            // Clear prev_touch so switching back to touchpad mode doesn't
-            // produce a spurious large jump.
+            // Clear so the next contact doesn't jump from a stale position.
             self.prev_touch = None;
         }
     }
 
-    /// Translate left analog stick deflection into relative mouse movement.
+    /// Soft curve for stick precision: near-center motion is slower than linear.
+    #[inline]
+    fn stick_precision_curve(norm: f32) -> f32 {
+        let a = norm.abs().clamp(0.0, 1.0);
+        // ~1.7 keeps mid-stick usable while full deflection still hits max.
+        a.powf(1.7) * norm.signum()
+    }
+
+    /// Translate left analog stick into **precise** relative mouse movement.
     ///
-    /// Velocity-based: stick position → cursor speed per frame.
-    /// A sub-pixel accumulator (`stick_acc_x/y`) carries fractional pixels
-    /// across frames so slow, precise movements don't stutter.
+    /// Velocity-based with a precision curve + sub-pixel accumulator so small
+    /// deflections stay smooth. Independent of touchpad swipe (fast travel).
+    /// Tray may mute the stick via `mouse_stick_active = false`.
     fn process_stick_mouse(&mut self, input: &UnifiedInput, actions: &mut Vec<Action>) {
         if !self.stick_mouse_enabled || !self.mouse_stick_active.load(Ordering::Relaxed) {
             return;
@@ -888,9 +892,11 @@ impl MapperState {
             return;
         }
 
-        // Normalize to -1.0..1.0 and scale by sensitivity (pixels/frame at full deflection)
-        let vx = (dx_raw as f32 / 127.0).clamp(-1.0, 1.0) * self.stick_mouse_sensitivity;
-        let vy = (dy_raw as f32 / 127.0).clamp(-1.0, 1.0) * self.stick_mouse_sensitivity;
+        // Normalize, precision curve, then scale (pixels/frame at full deflection).
+        let nx = (dx_raw as f32 / 127.0).clamp(-1.0, 1.0);
+        let ny = (dy_raw as f32 / 127.0).clamp(-1.0, 1.0);
+        let vx = Self::stick_precision_curve(nx) * self.stick_mouse_sensitivity;
+        let vy = Self::stick_precision_curve(ny) * self.stick_mouse_sensitivity;
 
         // Accumulate; extract whole pixels; keep remainder for next frame
         self.stick_acc_x += vx;
@@ -2532,14 +2538,14 @@ mod tests {
 
     #[test]
     fn stick_mouse_accumulates_subpixel() {
-        // sensitivity=0.3, dx_raw=64 → vx≈0.151 px/frame → needs ~7 frames to cross 1px
+        // Low sens + precision curve keeps mid-deflection sub-pixel for many frames.
         let mut mapper = MapperState::default();
         enable_stick_mode(&mapper);
         mapper.stick_mouse_sensitivity = 0.3;
         mapper.stick_mouse_dead_zone = 0;
 
         let input = input_with_left_stick(192, 128); // dx_raw=64
-        let fired = (0..10).any(|_| {
+        let fired = (0..40).any(|_| {
             mapper
                 .update(&input)
                 .iter()
@@ -2586,29 +2592,49 @@ mod tests {
     #[test]
     fn stick_mode_off_suppresses_stick_move() {
         let mut mapper = MapperState::default();
-        // Default: stick mode off → full stick deflection produces no MouseMove
+        mapper.mouse_stick_active.store(false, Ordering::Relaxed);
         let actions = mapper.update(&input_with_left_stick(255, 128));
         assert!(
             !actions
                 .iter()
                 .any(|a| matches!(a, Action::MouseMove { .. })),
-            "Stick should not move cursor when stick mode is off"
+            "Stick should not move cursor when tray mutes stick mode"
         );
     }
 
     #[test]
-    fn stick_mode_on_suppresses_touchpad_move() {
+    fn stick_and_touchpad_both_move_cursor() {
+        // Dual-speed design: pad = fast swipe, stick = precise — simultaneous OK.
         let mut mapper = MapperState::default();
         enable_stick_mode(&mapper);
-        // Prime prev_touch as if we were in touchpad mode, then switch
         mapper.prev_touch = Some((500, 300));
-        // Touchpad touch should NOT emit MouseMove when stick mode is active
         let actions = mapper.update(&input_with_touch(510, 305, false));
         assert!(
-            !actions
+            actions
                 .iter()
                 .any(|a| matches!(a, Action::MouseMove { .. })),
-            "Touchpad touch should not move cursor when stick mode is on"
+            "Touchpad swipe must move cursor even when stick is active"
+        );
+        let stick_actions = mapper.update(&input_with_left_stick(255, 128));
+        assert!(
+            stick_actions
+                .iter()
+                .any(|a| matches!(a, Action::MouseMove { .. })),
+            "Left stick must move cursor for precise control"
+        );
+    }
+
+    #[test]
+    fn stick_precision_curve_reduces_small_deflection() {
+        let fine = MapperState::stick_precision_curve(0.25).abs();
+        let linear = 0.25_f32;
+        assert!(
+            fine < linear,
+            "precision curve must be sub-linear near center ({fine} vs {linear})"
+        );
+        assert!(
+            (MapperState::stick_precision_curve(1.0) - 1.0).abs() < 1e-5,
+            "full deflection stays at 1.0"
         );
     }
 

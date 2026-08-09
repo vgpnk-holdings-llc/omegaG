@@ -301,11 +301,11 @@ async fn main() {
             log::error!("Controller may not work correctly over Bluetooth.");
         }
 
-        // DS4 has no touchpad parsing — auto-enable stick mouse mode.
-        // DualSense switches back to touchpad mode (its native input).
-        let stick = info.controller_type.is_ds4();
+        // Stick mouse on for both DualSense and DS4 (precise cursor). Touchpad
+        // swipe is independent (fast cursor) when the pad reports contacts.
+        // Tray can still mute the stick via SetStickMode(false).
         if let Some(tx) = &tray_tx {
-            let _ = tx.send(tray::TrayCmd::SetStickMode(stick));
+            let _ = tx.send(tray::TrayCmd::SetStickMode(true));
         }
 
         let handle = hid::HidHandle::new(device);
