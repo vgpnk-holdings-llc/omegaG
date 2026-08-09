@@ -19,9 +19,11 @@ mod mapper;
 mod mic;
 mod output;
 mod platform;
+mod state;
 mod tmux_detect;
 mod tray;
 mod update;
+mod voice_backend;
 // wsl.rs carries an inner #![cfg(windows)] — compiled out on Linux.
 mod wsl;
 
@@ -31,7 +33,7 @@ use crate::output::OutputState;
 use std::sync::Arc;
 #[cfg(windows)]
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use tokio::time::{Duration, sleep};
 
 const ORDINARY_ACTION_LIMIT: usize = 28;
@@ -356,9 +358,14 @@ async fn main() {
                 (None, None)
             };
 
+        // Shared DualSense player-indicator LEDs (profile P1–P4). Input loop
+        // writes on PS cycle; output loop reads every refresh — original design.
+        let player_leds = Arc::new(AtomicU8::new(mapper::PROFILE_PLAYER_LEDS[0]));
+
         // Spawn output loop for this connection
         let output_handle = handle.clone_handle();
         let lightbar_color = cfg.lightbar.clone();
+        let player_leds_out = Arc::clone(&player_leds);
         #[cfg(windows)]
         let output_task = {
             let codex_output = Arc::clone(&codex_state);
@@ -376,13 +383,14 @@ async fn main() {
                     codex_cfg,
                     runtime_view,
                     started,
+                    player_leds_out,
                 )
                 .await;
             })
         };
         #[cfg(not(windows))]
         let output_task = tokio::spawn(async move {
-            run_output_loop(output_handle, ct, conn, lightbar_color).await;
+            run_output_loop(output_handle, ct, conn, lightbar_color, player_leds_out).await;
         });
 
         // Run input loop — returns when device disconnects or USB scanner signals
@@ -403,6 +411,7 @@ async fn main() {
             codex_runtime
                 .as_ref()
                 .map_or(0, |runtime| runtime.epoch.load(Ordering::Acquire)),
+            Arc::clone(&player_leds),
         )
         .await;
         #[cfg(not(windows))]
@@ -414,6 +423,7 @@ async fn main() {
             &detected,
             Arc::clone(&mouse_stick_active),
             usb_available.clone(),
+            Arc::clone(&player_leds),
         )
         .await;
 
@@ -457,8 +467,11 @@ async fn run_input_loop(
     started: std::time::Instant,
     codex_transport: Option<codex_runtime::RuntimeTransport>,
     codex_generation: u64,
+    player_leds: Arc<AtomicU8>,
 ) {
     let mut mapper_state = mapper::MapperState::new(cfg, detected, mouse_stick_active);
+    player_leds.store(mapper_state.profile_led_mask(), Ordering::Relaxed);
+    let mut last_profile = mapper_state.profile();
     let transport: Box<dyn codex_micro::CodexTransport> = match codex_transport {
         Some(transport) => Box::new(transport),
         None => Box::new(codex_micro::UnavailableTransport),
@@ -533,16 +546,10 @@ async fn run_input_loop(
                     first_report = false;
                 }
 
-                // Validate CRC on Bluetooth
-                if conn == ConnectionType::Bluetooth && !input::validate_bt_crc(ct, &data) {
-                    consecutive_errors += 1;
-                    if consecutive_errors % 100 == 1 {
-                        log::warn!("BT CRC validation failed ({consecutive_errors} times)");
-                    }
-                    continue;
-                }
-
-                match input::parse(ct, conn, &data) {
+                // State reading only: BT CRC + report parse → UnifiedInput.
+                // Mapper never sees raw HID / connection type.
+                let link = state::ControllerLink::new(ct, conn);
+                match state::decode_report(link, &data) {
                     Ok(mut unified) => {
                         consecutive_errors = 0;
                         let now_ms = started.elapsed().as_millis() as u64;
@@ -573,6 +580,11 @@ async fn run_input_loop(
                             suppress_semantic_input(&mut unified);
                         }
                         let actions = mapper_state.update(&unified);
+                        let current_profile = mapper_state.profile();
+                        if current_profile != last_profile {
+                            player_leds.store(mapper_state.profile_led_mask(), Ordering::Relaxed);
+                            last_profile = current_profile;
+                        }
                         for action in actions {
                             log::debug!("Action: {action:?}");
                             match enqueue_action(&action_tx, &ordinary_pending, action) {
@@ -591,17 +603,23 @@ async fn run_input_loop(
                             break;
                         }
 
-                        // Mute button — toggle system mic on press (DualSense only; DS4 has no mic)
+                        // Mute is a state side-effect, not a shortcut map.
                         let mute_now = unified.buttons.mute;
                         if ct.is_dualsense() && mute_now && !last_mute {
                             tokio::task::spawn_blocking(mic::toggle_mute);
                         }
                         last_mute = mute_now;
                     }
+                    Err(state::DecodeError::BtCrcInvalid) => {
+                        consecutive_errors += 1;
+                        if consecutive_errors % 100 == 1 {
+                            log::warn!("BT CRC validation failed ({consecutive_errors} times)");
+                        }
+                    }
                     Err(e) => {
                         consecutive_errors += 1;
                         if consecutive_errors % 100 == 1 {
-                            log::warn!("Input parse error ({consecutive_errors}): {e}");
+                            log::warn!("Input decode error ({consecutive_errors}): {e}");
                         }
                     }
                 }
@@ -617,12 +635,13 @@ async fn run_input_loop(
         let result = codex_dispatcher.dispatch(action);
         log::warn!("Codex Micro disconnect release: {result:?}");
     }
+    // Safety: release L2-held modifiers if the link drops mid-hold.
+    for action in mapper_state.force_release_holds() {
+        let _ = enqueue_action(&action_tx, &ordinary_pending, action);
+    }
     drop(action_tx);
     action_worker.await.ok();
 }
-
-/// Player indicator LED preset — mimics PS5 native Player 1 assignment (center dot).
-const PLAYER_LEDS: u8 = 0x04;
 
 /// Output loop: keep the static lightbar color, player LED, and mic-mute LED updated.
 /// Windows: overlays codex runtime/session status onto lightbar + rumble.
@@ -637,6 +656,7 @@ async fn run_output_loop(
     codex_cfg: config::CodexMicroConfig,
     runtime_view: Option<Arc<Mutex<codex_runtime::RuntimeView>>>,
     started: std::time::Instant,
+    player_leds: Arc<AtomicU8>,
 ) {
     let mut bt_seq = 0u8;
 
@@ -692,9 +712,11 @@ async fn run_output_loop(
             } else {
                 0
             },
-            player_leds: if fast { 0x1f } else { PLAYER_LEDS },
+            // Profile LEDs win over "fast" all-on unless we want all five as P4.
+            player_leds: player_leds.load(Ordering::Relaxed),
             mute_led: mic::MIC_MUTED.load(Ordering::Relaxed) as u8,
         };
+        let _ = fast; // codex fast path no longer overrides profile LEDs
         let report = output::build_report(ct, conn, &out, &mut bt_seq);
         handle.write(report).await;
     }
@@ -712,8 +734,11 @@ async fn run_input_loop(
     detected: &detect::Detected,
     mouse_stick_active: Arc<AtomicBool>,
     usb_switch_flag: Option<Arc<AtomicBool>>,
+    player_leds: Arc<AtomicU8>,
 ) {
     let mut mapper_state = mapper::MapperState::new(cfg, detected, mouse_stick_active);
+    player_leds.store(mapper_state.profile_led_mask(), Ordering::Relaxed);
+    let mut last_profile = mapper_state.profile();
     let mut consecutive_errors = 0u32;
     let mut first_report = true;
     let mut last_mute = false;
@@ -773,19 +798,19 @@ async fn run_input_loop(
                     first_report = false;
                 }
 
-                // Validate CRC on Bluetooth
-                if conn == ConnectionType::Bluetooth && !input::validate_bt_crc(ct, &data) {
-                    consecutive_errors += 1;
-                    if consecutive_errors % 100 == 1 {
-                        log::warn!("BT CRC validation failed ({consecutive_errors} times)");
-                    }
-                    continue;
-                }
-
-                match input::parse(ct, conn, &data) {
+                // State reading only: BT CRC + report parse → UnifiedInput.
+                // Mapper never sees raw HID / connection type.
+                let link = state::ControllerLink::new(ct, conn);
+                match state::decode_report(link, &data) {
                     Ok(unified) => {
                         consecutive_errors = 0;
                         let actions = mapper_state.update(&unified);
+                        // Instant profile LED update (original e62224e design).
+                        let current_profile = mapper_state.profile();
+                        if current_profile != last_profile {
+                            player_leds.store(mapper_state.profile_led_mask(), Ordering::Relaxed);
+                            last_profile = current_profile;
+                        }
                         for action in actions {
                             log::debug!("Action: {action:?}");
                             match enqueue_action(&action_tx, &ordinary_pending, action) {
@@ -804,22 +829,32 @@ async fn run_input_loop(
                             break;
                         }
 
-                        // Mute button — toggle system mic on press (DualSense only; DS4 has no mic)
+                        // Mute is a state side-effect, not a shortcut map.
                         let mute_now = unified.buttons.mute;
                         if ct.is_dualsense() && mute_now && !last_mute {
                             tokio::task::spawn_blocking(mic::toggle_mute);
                         }
                         last_mute = mute_now;
                     }
+                    Err(state::DecodeError::BtCrcInvalid) => {
+                        consecutive_errors += 1;
+                        if consecutive_errors % 100 == 1 {
+                            log::warn!("BT CRC validation failed ({consecutive_errors} times)");
+                        }
+                    }
                     Err(e) => {
                         consecutive_errors += 1;
                         if consecutive_errors % 100 == 1 {
-                            log::warn!("Input parse error ({consecutive_errors}): {e}");
+                            log::warn!("Input decode error ({consecutive_errors}): {e}");
                         }
                     }
                 }
             }
         }
+    }
+    // Safety: release L2-held modifiers if the link drops mid-hold.
+    for action in mapper_state.force_release_holds() {
+        let _ = enqueue_action(&action_tx, &ordinary_pending, action);
     }
     drop(action_tx);
     action_worker.await.ok();
@@ -833,13 +868,14 @@ async fn run_output_loop(
     ct: controller::ControllerType,
     conn: controller::ConnectionType,
     lightbar_color: config::ColorConfig,
+    player_leds: Arc<AtomicU8>,
 ) {
     let mut bt_seq = 0u8;
 
     // Prime mic mute state from system before first frame
     tokio::task::spawn_blocking(mic::init).await.ok();
 
-    // The output report is static except for the mute LED, but resending
+    // The output report is static except for mute + profile LEDs, but resending
     // periodically keeps the controller state correct after wake/reconnect blips.
     let mut ticker = tokio::time::interval(Duration::from_millis(100));
 
@@ -851,7 +887,7 @@ async fn run_output_loop(
             lightbar_b: lightbar_color.b,
             rumble_left: 0,
             rumble_right: 0,
-            player_leds: PLAYER_LEDS,
+            player_leds: player_leds.load(Ordering::Relaxed),
             mute_led: mic::MIC_MUTED.load(Ordering::Relaxed) as u8,
         };
         let report = output::build_report(ct, conn, &out, &mut bt_seq);

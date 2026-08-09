@@ -1,4 +1,4 @@
-# RECON.md — omegaG (ds4cc 3.1.0) Code Reconnaissance
+# RECON.md — omegaG (ds4cc 3.2.0) Code Reconnaissance
 
 Source: github.com/vgpnk-holdings-llc/omegaG @ commit `bbaa2f7542ab01299e198d48831ef223009f4294`
 Mirrored to: `/mnt/agents/output/omegag-port/repo/` (all files SHA-1-verified against git blob shas)
@@ -83,7 +83,7 @@ Direct deps of `ds4cc` package:
 - log **0.4.29**, env_logger **0.11.9**, libc **0.2.182**
 - image **0.25.9** (png only), ureq **3.2.0** (rustls 0.23.37)
 
-Package: `ds4cc` **3.1.0**, Rust edition 2024.
+Package: `ds4cc` **3.2.0**, Rust edition 2024.
 
 ## 4. Mirror status
 

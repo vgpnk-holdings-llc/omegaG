@@ -186,7 +186,7 @@ parity:
 
 | Windows | Linux |
 |---|---|
-| Open Wispr Flow | "Open voice app" — only when `[voice] app_command` is set |
+| Open Wispr Flow | "Open hyprwhspr (free Whisper …)" — hyprwhspr-rs auto-discover or `app_command` |
 | Restart | Re-exec of `current_exe` via exec(2) — same PID, fresh image |
 | Check for Update | Linux self-update flow (below) |
 | Enable auto start-up | `systemd --user` unit, XDG autostart fallback |

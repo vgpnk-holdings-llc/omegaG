@@ -16,10 +16,11 @@
 /// |-------------|-----------------|-------|---------------------------|
 /// | `godspeed`  | `\| godspeed`   | yes   | Mirrors claude-launcher.  |
 ///
-/// All built-ins are **unassigned by default** — no stock button maps to them.
-/// To activate:
+/// Stock default: **L3** maps to `launcher:godspeed`. Other buttons stay free.
+/// Override or reassign:
 /// ```toml
 /// [buttons]
+/// l3 = "launcher:godspeed"
 /// share = "launcher:godspeed"
 /// ```
 ///
@@ -51,10 +52,10 @@ pub fn builtin_action(name: &str) -> Option<LauncherAction> {
 
 // ── Voice app launching (Linux) ───────────────────────────────────────
 //
-// The Windows tray has "Open Wispr Flow" (a Windows exe). On Linux there is
-// no bundled voice app: the user points `[voice] app_command` at whatever
-// they use, and the tray's "Open voice app" item calls this. No shell is
-// involved — the command string is split into argv and spawned directly.
+// The Windows tray has "Open Wispr Flow" (a Windows exe). On Linux the free
+// path is hyprwhspr-rs (better-slop; original idea: goodroot/hyprwhspr) +
+// local Whisper — see `voice_backend` and CREDITS.md. The tray resolves
+// discovery or `[voice] app_command`, then calls this. No shell: argv only.
 
 /// Spawn the configured voice app from `[voice] app_command`.
 ///
@@ -348,9 +349,10 @@ mod tests {
     // ── Unchanged defaults ────────────────────────────────────────────
 
     #[test]
-    fn no_default_button_maps_to_launcher() {
+    fn only_l3_default_maps_to_godspeed_launcher() {
         let b = ButtonsConfig::default();
-        let fields = [
+        assert_eq!(b.l3, "launcher:godspeed");
+        let others = [
             &b.l1,
             &b.r1,
             &b.r2,
@@ -361,13 +363,12 @@ mod tests {
             &b.cross,
             &b.circle,
             &b.triangle,
-            &b.l3,
             &b.r3,
         ];
-        let mapped = fields.iter().filter(|v| v.starts_with("launcher:")).count();
+        let mapped = others.iter().filter(|v| v.starts_with("launcher:")).count();
         assert_eq!(
             mapped, 0,
-            "no default button should be pre-wired to a launcher action"
+            "only L3 is pre-wired to a launcher action (godspeed)"
         );
     }
 

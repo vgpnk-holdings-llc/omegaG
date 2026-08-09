@@ -166,8 +166,12 @@ r = 255
 g = 140
 b = 0
 
-[voice]                     # Linux: optional voice app for the tray menu
-app_command = ""            # e.g. "wispr-flow" — empty hides the tray item
+[voice]                     # Linux free STT (see CREDITS.md)
+app_command = ""            # empty + auto_discover → hyprwhspr-rs
+backend = "hyprwhspr-rs"    # free path: better-slop's Rust port of goodroot/hyprwhspr
+whisper_model = "medium"    # OpenAI Whisper size for install + tray label
+auto_discover = true        # find ~/.cargo/bin/hyprwhspr-rs etc.
+# tray_label = ""           # optional override
 
 [codex_micro]               # Windows-only; parsed but ignored on Linux
 enabled = false             # opt in; legacy defaults remain untouched
@@ -306,13 +310,27 @@ Missing pieces degrade gracefully: no WSL/tmux → hardcoded defaults, no tmux s
 
 ## 🎙️ Controller + Voice = No Keyboard
 
-DS4CC pairs with [Wispr Flow](https://ref.wisprflow.ai/vgpnk) on Windows
-(configure any voice app on Linux via `[voice] app_command`):
+**Windows:** pairs with [Wispr Flow](https://ref.wisprflow.ai/vgpnk) (commercial).
 
-- **Voice** handles all text input — you talk, it types (L2 is the push-to-talk hold)
-- **DS4CC** handles everything else — navigation, tmux, scrolling, Enter/Escape/Tab
+**Linux (free path):** system-wide dictation is built on **hyprwhspr** / **hyprwhspr-rs**, not a closed STT:
 
-Voice dictates. Controller navigates. No keyboard required.
+| Project | Creator | Role |
+|---|---|---|
+| [hyprwhspr](https://github.com/goodroot/hyprwhspr) | **goodroot** | Original local-first Wispr-style dictation for Linux |
+| [hyprwhspr-rs](https://github.com/better-slop/hyprwhspr-rs) | **better-slop** | Rust reimplementation (Hyprland / Omarchy); what OmegaG launches |
+| OpenAI Whisper **medium** | OpenAI (via [whisper.cpp](https://github.com/ggml-org/whisper.cpp)) | Default free offline model |
+
+OmegaG is an **integrator** — we discover/launch and document; we do not rebrand their work. Full homage: [`CREDITS.md`](./CREDITS.md).
+
+```sh
+# Install free STT stack (hyprwhspr-rs + whisper.cpp + ggml-medium)
+./packaging/linux/install-voice-hyprwhspr.sh
+```
+
+- **Voice / STT** handles text — talk, it types (hyprwhspr hotkeys or controller PTT where configured)
+- **DS4CC** handles navigation, tmux, scrolling, Enter/Escape/Tab
+
+Voice dictates. Controller navigates. No keyboard required. No STT subscription on Linux.
 
 ---
 
@@ -320,7 +338,7 @@ Voice dictates. Controller navigates. No keyboard required.
 
 | Menu item | What it does |
 |---|---|
-| Open Wispr Flow | Launch Wispr Flow — on Linux: "Open voice app" when `[voice] app_command` is set |
+| Open Wispr Flow | Windows: Wispr Flow. Linux: **Open hyprwhspr (free Whisper medium)** when hyprwhspr-rs is discovered or `[voice] app_command` is set |
 | Restart | Restart DS4CC |
 | Check for Update | Self-update from GitHub releases (per-OS asset) |
 | Enable auto start-up | Toggle startup entry (registry on Windows, systemd user / XDG autostart on Linux) |
@@ -520,14 +538,18 @@ but if `enabled = true` the daemon logs a warning and ignores it.
 | Self-update | ✓ (installer) | ✓ (tarball, atomic replace) |
 | USB priority + BT fallback reconnect | ✓ | ✓ |
 | Codex controller runtime | ✓ | ✗ (Windows-only) |
-| Wispr Flow integration | ✓ | via `[voice] app_command` |
+| Wispr Flow / free STT | Wispr Flow | **hyprwhspr-rs** (goodroot → better-slop) + Whisper medium |
 
 Config on Linux: `~/.config/ds4cc/config.toml` — same schema as Windows,
 plus the optional:
 
 ```toml
 [voice]
-app_command = ""   # e.g. "wispr-flow" — adds "Open voice app" to the tray
+# Free path: empty + auto_discover finds hyprwhspr-rs (CREDITS.md)
+app_command = ""
+backend = "hyprwhspr-rs"
+whisper_model = "medium"
+auto_discover = true
 ```
 
 ## License

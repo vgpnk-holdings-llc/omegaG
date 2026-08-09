@@ -31,13 +31,17 @@ fi
 if command -v apt-get >/dev/null 2>&1; then
     echo "==> Installing runtime dependencies (apt)"
     $SUDO apt-get update -qq
-    # libudev1: hidapi backend; tar: self-update extraction; tmux: optional,
-    # enables keybind auto-detection from your tmux server.
-    $SUDO apt-get install -y libudev1 tar tmux
+    # libudev1: hidapi backend; tar: self-update extraction; tmux: optional
+    # keybind auto-detection; wtype: literal launcher text on Wayland
+    # (never synthesize characters via uinput — layout-independent inject).
+    # xdotool: same for X11 sessions.
+    $SUDO apt-get install -y libudev1 tar tmux wtype xdotool || \
+        $SUDO apt-get install -y libudev1 tar tmux
 elif command -v pacman >/dev/null 2>&1; then
     echo "==> Installing runtime dependencies (pacman)"
-    # systemd-libs provides libudev; tmux is optional (keybind detection).
-    $SUDO pacman -S --needed --noconfirm systemd-libs tar tmux
+    # systemd-libs: libudev; tmux: keybind detect; wtype: Wayland text inject.
+    $SUDO pacman -S --needed --noconfirm systemd-libs tar tmux wtype xdotool || \
+        $SUDO pacman -S --needed --noconfirm systemd-libs tar tmux
 else
     echo "error: unsupported distro — need apt-get (Ubuntu/Debian) or pacman (Arch)" >&2
     exit 1

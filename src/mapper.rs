@@ -1,26 +1,21 @@
-/// Button mapper: translates UnifiedInput → keyboard/mouse events.
+/// Shortcut **mapper**: [`UnifiedInput`] → [`Action`] (then OS inject).
 ///
-/// All OS input injection is routed through the [`crate::platform::Injector`]
-/// trait: on Windows a [`WinInjector`] wraps the original `SendInput` logic
-/// (behavior-identical), on Linux C1's evdev/uinput injector is used. Pure
-/// mapping logic (button → action resolution, repeat timing, stick math) is
-/// platform-neutral and shared.
+/// **Does not** open HID, validate BT CRC, or know USB vs Bluetooth. That
+/// lives in `crate::state` + `crate::input` + `crate::hid`. The only contract
+/// from the controller is [`crate::input::UnifiedInput`].
 ///
-/// Fixed mappings (always active, not user-configurable):
-///   D-pad Up/Down/Left/Right → Arrow keys (two-frame confirm + repeat)
-///   Left stick  → Mouse cursor (velocity-based, configurable sensitivity)
-///   Right stick → Mouse scroll wheel (vertical + horizontal)
-///   L2       → Ctrl+Win (hold)
+/// ## Profiles (PS button)
 ///
-/// Configurable mappings ([buttons] in config.toml — L1, R1, R2, Square,
-/// Share, Options, Touchpad, Cross, Circle, Triangle, L3, R3) resolve at
-/// startup to a key sequence, from a tmux action name (prefix + detected
-/// key), a Claude Code action name (detected from ~/.claude/keybindings.json),
-/// launcher action (e.g. "launcher:godspeed" -> configured Unicode text), or
-/// direct key combo.
-/// Defaults: L1/R1 → prev/next tmux window, R2 → kill-window, Square →
-/// new-window, Cross → Enter, Circle → Escape, Triangle → Tab, L3 → Ctrl+T,
-/// R3 → Ctrl+U.
+/// Four input profiles (P1–P4). **PS** rising edge cycles
+/// `0 → 1 → 2 → 3 → 0`. DualSense player-indicator LEDs (five dots under the
+/// touchpad) show the active profile — same scheme as the original 2-profile
+/// design, extended to four masks in [`PROFILE_PLAYER_LEDS`].
+///
+/// Profile 0 button map comes from `[buttons]`; profiles 1–3 from optional
+/// `[profile_1]` / `[profile_2]` / `[profile_3]` (else ship defaults).
+///
+/// Fixed mappings (always active, all profiles):
+///   D-pad, left/right stick mouse/scroll, L2 hold Ctrl+Super
 ///
 /// Combos are delivered atomically by the platform injector (a single
 /// `SendInput` batch on Windows; one uinput event burst + SYN on Linux).
@@ -29,11 +24,48 @@ use crate::detect::Detected;
 use crate::input::{ButtonState, DPad, UnifiedInput};
 use crate::keys::Key;
 use crate::platform::Injector;
+use std::collections::HashMap;
 use std::sync::{
     Arc, Mutex, OnceLock,
     atomic::{AtomicBool, Ordering},
 };
 use std::time::Instant;
+
+/// Number of input profiles cycled by the PS button.
+pub const PROFILE_COUNT: usize = 4;
+
+/// DualSense player-indicator LED masks (bits 0–4 = five dots left→right).
+///
+/// Matches the original elegant 2-profile design and extends it to P3/P4
+/// using the same bit layout Sony uses for player assignment:
+/// - P1 `0x04` — center only  
+/// - P2 `0x0A` — inner two (center-left + center-right)  
+/// - P3 `0x1B` — outer four (no center)  
+/// - P4 `0x1F` — all five  
+pub const PROFILE_PLAYER_LEDS: [u8; PROFILE_COUNT] = [0x04, 0x0A, 0x1B, 0x1F];
+
+/// Active profile index `0..PROFILE_COUNT` (P1..=P4 on the controller).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Profile(pub u8);
+
+impl Profile {
+    pub const P1: Self = Self(0);
+    pub fn index(self) -> usize {
+        self.0 as usize % PROFILE_COUNT
+    }
+    pub fn led_mask(self) -> u8 {
+        PROFILE_PLAYER_LEDS[self.index()]
+    }
+    pub fn next(self) -> Self {
+        Self(((self.0 as usize + 1) % PROFILE_COUNT) as u8)
+    }
+}
+
+impl std::fmt::Display for Profile {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "P{}", self.index() + 1)
+    }
+}
 
 /// Milliseconds to wait after the full launcher text has been injected, before
 /// pressing Return. Direct clone of claude-launcher's two-phase submit: the text
@@ -42,6 +74,16 @@ use std::time::Instant;
 /// racing. Shared verbatim by the Windows `SendInput` and Linux `wtype`/`xdotool`
 /// paths so submit timing is identical on every platform.
 pub const ENTER_DELAY_MS: u64 = 16;
+
+/// After all keys in a multi-key combo are down, hold before releasing.
+/// Example for Triangle → `ctrl+n`:
+/// `Ctrl↓` + `n↓` → 19 ms → `Ctrl↑` + `n↑`.
+pub const COMBO_HOLD_MS: u64 = 19;
+
+/// Gap between releasing modifiers and releasing the main key when a combo
+/// uses staggered release (e.g. Options `ctrl+\`: mods up, wait, main up).
+/// Enter after launcher text also reuses this (10 ms).
+pub const COMBO_MAIN_RELEASE_GAP_MS: u64 = 10;
 
 #[cfg(windows)]
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
@@ -333,7 +375,14 @@ fn default_key_for_action(action: &str) -> Option<Vec<VKey>> {
     match action {
         "previous-window" => Some(vec![VKey::P]),
         "next-window" => Some(vec![VKey::N]),
-        "new-window" => Some(vec![VKey::C]),
+        // `new-window -c ~` variants share the default `c` bind; for a true
+        // home cwd the user's tmux bind (or detected full command) should be
+        // `new-window -c ~` / `$HOME`. Key fallback still opens a new window.
+        "new-window"
+        | "new-window -c ~"
+        | "new-window -c ~/"
+        | "new-window -c $HOME"
+        | "new-window -c \"$HOME\"" => Some(vec![VKey::C]),
         "kill-window" => Some(vec![VKey::Shift, VKey::D7]), // &
         "copy-mode" => Some(vec![VKey::LeftBracket]),
         "resize-pane -Z" => Some(vec![VKey::Z]), // zoom toggle
@@ -343,6 +392,9 @@ fn default_key_for_action(action: &str) -> Option<Vec<VKey>> {
         "detach-client" => Some(vec![VKey::D]),
         "split-window -h" => Some(vec![VKey::Shift, VKey::D5]), // %
         "split-window -v" => Some(vec![VKey::Shift, VKey::Quote]), // "
+        // Common partials used in configs (path arg may be omitted or custom).
+        "split-window -h -c" => Some(vec![VKey::Shift, VKey::D5]),
+        "split-window -v -c" => Some(vec![VKey::Shift, VKey::Quote]),
         _ => None,
     }
 }
@@ -379,10 +431,28 @@ impl ButtonMap {
             if value.is_empty() {
                 return None;
             }
-            // Tmux action → prefix + key sequence
+            // Tmux action → prefix + key sequence.
+            // Prefer exact command match, then base command (first token), then
+            // hardcoded tmux-default keys for well-known action strings.
             if let Some(keys) = tmux_detected
                 .and_then(|d| d.key_for_action(value).cloned())
+                .or_else(|| {
+                    let base = value.split_whitespace().next().unwrap_or(value);
+                    if base != value {
+                        tmux_detected.and_then(|d| d.key_for_action(base).cloned())
+                    } else {
+                        None
+                    }
+                })
                 .or_else(|| default_key_for_action(value))
+                .or_else(|| {
+                    let base = value.split_whitespace().next().unwrap_or(value);
+                    if base != value {
+                        default_key_for_action(base)
+                    } else {
+                        None
+                    }
+                })
             {
                 log::debug!("Resolved '{value}' as tmux action");
                 return Some(Action::KeySequence(vec![prefix.clone(), keys]));
@@ -467,12 +537,14 @@ pub struct MapperState {
     prev_touch: Option<(u16, u16)>,
     touchpad_enabled: bool,
     touchpad_sensitivity: f32,
-    // Configurable button mappings (resolved once at startup)
-    buttons: ButtonMap,
+    /// Four resolved button maps (index = active profile).
+    profiles: [ButtonMap; PROFILE_COUNT],
+    active_profile: Profile,
 }
 
 impl Default for MapperState {
     fn default() -> Self {
+        let map = ButtonMap::default();
         Self {
             prev: ButtonState::default(),
             repeat_up: RepeatTimer::default(),
@@ -492,7 +564,8 @@ impl Default for MapperState {
             prev_touch: None,
             touchpad_enabled: true,
             touchpad_sensitivity: 1.5,
-            buttons: ButtonMap::default(),
+            profiles: [map.clone(), map.clone(), map.clone(), map],
+            active_profile: Profile::P1,
         }
     }
 }
@@ -505,6 +578,20 @@ impl MapperState {
         detected: &Detected,
         mouse_stick_active: Arc<AtomicBool>,
     ) -> Self {
+        let resolve = |b: &ButtonsConfig| {
+            ButtonMap::resolve(b, &cfg.tmux, detected, &cfg.launchers)
+        };
+        let p0 = resolve(&cfg.buttons);
+        let p1 = resolve(cfg.profile_1.as_ref().unwrap_or(&ButtonsConfig::default()));
+        let p2 = resolve(cfg.profile_2.as_ref().unwrap_or(&ButtonsConfig::default()));
+        let p3 = resolve(cfg.profile_3.as_ref().unwrap_or(&ButtonsConfig::default()));
+        log::info!(
+            "Profiles ready: P1–P4 (PS cycles); LEDs {:02X}/{:02X}/{:02X}/{:02X}",
+            PROFILE_PLAYER_LEDS[0],
+            PROFILE_PLAYER_LEDS[1],
+            PROFILE_PLAYER_LEDS[2],
+            PROFILE_PLAYER_LEDS[3],
+        );
         Self {
             scroll_dead_zone: cfg.scroll.dead_zone as i16,
             scroll_sensitivity: cfg.scroll.sensitivity,
@@ -515,9 +602,38 @@ impl MapperState {
             mouse_stick_active,
             touchpad_enabled: cfg.touchpad.enabled,
             touchpad_sensitivity: cfg.touchpad.sensitivity,
-            buttons: ButtonMap::resolve(&cfg.buttons, &cfg.tmux, detected, &cfg.launchers),
+            profiles: [p0, p1, p2, p3],
+            active_profile: Profile::P1,
             ..Default::default()
         }
+    }
+
+    /// Currently active profile (P1–P4).
+    pub fn profile(&self) -> Profile {
+        self.active_profile
+    }
+
+    /// Player-indicator LED bitmask for the active profile.
+    pub fn profile_led_mask(&self) -> u8 {
+        self.active_profile.led_mask()
+    }
+
+    fn active_map(&self) -> &ButtonMap {
+        &self.profiles[self.active_profile.index()]
+    }
+
+    /// Test helper: clear touchpad mapping on every profile (restore click fallback).
+    #[cfg(test)]
+    fn clear_touchpad_maps(&mut self) {
+        for p in &mut self.profiles {
+            p.touchpad = None;
+        }
+    }
+
+    /// Test helper: whether the active profile maps the touchpad press.
+    #[cfg(test)]
+    fn active_touchpad_mapped(&self) -> bool {
+        self.active_map().touchpad.is_some()
     }
 
     /// Given current input, return actions for newly pressed buttons and analog input.
@@ -532,19 +648,33 @@ impl MapperState {
         // --- Left stick → mouse cursor (always active) ---
         self.process_stick_mouse(input, &mut actions);
 
+        // --- PS: cycle profiles (elegant original design, 4 slots) ---
+        if current.ps && !self.prev.ps {
+            self.active_profile = self.active_profile.next();
+            log::info!(
+                "Profile → {} (player LEDs 0x{:02X})",
+                self.active_profile,
+                self.profile_led_mask()
+            );
+        }
+
         // --- Fixed key mappings ---
-        // L2: hold Ctrl+Win while button is held
+        // L2: hold Ctrl+Win while button is held.
+        // Nested KeyCombo/KeySequence that also include Ctrl (e.g. default
+        // L1 → prefix Ctrl+B) must not release the L2-held modifiers — that
+        // is handled by [`RefcountInjector`] around the OS injector.
         if current.l2 && !self.prev.l2 {
             actions.push(Action::KeyDown(vec![VKey::Control, VKey::Win]));
         } else if !current.l2 && self.prev.l2 {
             actions.push(Action::KeyUp(vec![VKey::Control, VKey::Win]));
         }
 
-        // --- Configurable button mappings ---
+        // --- Active-profile configurable button mappings ---
+        let map = self.active_map().clone();
         macro_rules! on_press_mapped {
             ($field:ident) => {
                 if current.$field && !self.prev.$field {
-                    if let Some(action) = self.buttons.$field.as_ref() {
+                    if let Some(action) = map.$field.as_ref() {
                         actions.push(action.clone());
                     }
                 }
@@ -562,10 +692,14 @@ impl MapperState {
         on_press_mapped!(triangle);
         on_press_mapped!(l3);
         on_press_mapped!(r3);
-        // Touchpad press is a mouse click while touchpad-mouse is enabled;
-        // with it disabled the touchpad button becomes a mappable button.
-        if !self.touchpad_enabled {
-            on_press_mapped!(touchpad);
+        // Touchpad press: profile map wins when set; otherwise mouse click
+        // while touchpad cursor mode is enabled.
+        if current.touchpad && !self.prev.touchpad {
+            if let Some(action) = map.touchpad.as_ref() {
+                actions.push(action.clone());
+            } else if self.touchpad_enabled {
+                actions.push(Action::MouseClick);
+            }
         }
 
         // --- D-pad with two-frame confirm + repeat ---
@@ -608,6 +742,19 @@ impl MapperState {
         self.process_scroll(input.right_stick, now, &mut actions);
 
         self.prev = *current;
+        actions
+    }
+
+    /// Synthesize safety releases for held fixed mappings (L2 → Ctrl+Win).
+    ///
+    /// Call when the controller link drops mid-hold so modifiers do not stick.
+    /// Emits [`Action::KeyUp`] which is a safety release (queue-bypass eligible).
+    pub fn force_release_holds(&mut self) -> Vec<Action> {
+        let mut actions = Vec::new();
+        if self.prev.l2 {
+            actions.push(Action::KeyUp(vec![VKey::Control, VKey::Win]));
+            self.prev.l2 = false;
+        }
         actions
     }
 
@@ -675,14 +822,14 @@ impl MapperState {
         }
     }
 
-    /// Translate touchpad touch coordinates into relative mouse movement and
-    /// touchpad click into a left mouse button click.
+    /// Translate touchpad *swipe* coordinates into relative mouse movement.
     ///
-    /// Called on every frame BEFORE profile-dependent dispatch so that the
-    /// touchpad works identically in both Default and Tmux profiles.
+    /// The physical touchpad **press** is handled in [`MapperState::update`]:
+    /// a non-empty `[buttons].touchpad` mapping takes priority; otherwise a
+    /// left-click is emitted when touchpad cursor mode is enabled.
     fn process_touchpad(&mut self, input: &UnifiedInput, actions: &mut Vec<Action>) {
         if !self.touchpad_enabled {
-            return; // config-level disable: suppresses both movement and click
+            return; // config-level disable: suppresses swipe movement
         }
 
         // ── Touch movement: only in touchpad mode (not when left stick drives cursor) ──
@@ -704,12 +851,6 @@ impl MapperState {
             // Clear prev_touch so switching back to touchpad mode doesn't
             // produce a spurious large jump.
             self.prev_touch = None;
-        }
-
-        // ── Touchpad press → left click (always active regardless of mouse mode) ──
-        if input.buttons.touchpad && !self.prev.touchpad {
-            log::debug!("TouchpadClick → MouseClick");
-            actions.push(Action::MouseClick);
         }
     }
 
@@ -908,17 +1049,20 @@ pub fn send_launcher_text(text: &str, submit_enter: bool) {
     }
 
     if submit_enter {
-        // Give the target app time to process the text batch before Enter arrives
-        // so the two events don't race (shared two-phase guard, all platforms).
+        // 16 ms settle, then staged Return: down → 10 ms → up (same as Linux).
         std::thread::sleep(std::time::Duration::from_millis(ENTER_DELAY_MS));
-        let enter = [
-            make_key_input(VK_RETURN, 0),
-            make_key_input(VK_RETURN, KEYEVENTF_KEYUP),
-        ];
         unsafe {
             SendInput(
-                enter.len() as u32,
-                enter.as_ptr(),
+                1,
+                &make_key_input(VK_RETURN, 0),
+                std::mem::size_of::<INPUT>() as i32,
+            );
+        }
+        std::thread::sleep(std::time::Duration::from_millis(COMBO_MAIN_RELEASE_GAP_MS));
+        unsafe {
+            SendInput(
+                1,
+                &make_key_input(VK_RETURN, KEYEVENTF_KEYUP),
                 std::mem::size_of::<INPUT>() as i32,
             );
         }
@@ -1019,6 +1163,9 @@ fn make_mouse_flag_input(flags: u32) -> INPUT {
 /// Linux: C1's evdev/uinput injector via [`crate::platform::new_injector`];
 /// if /dev/uinput is unavailable the daemon keeps running with a logged
 /// no-op injector (feature-degraded, never fatal — SPEC §4).
+///
+/// Both platforms wrap the OS injector in [`RefcountInjector`] so L2 hold
+/// (Ctrl+Super) survives nested `combo` releases that also press Ctrl.
 static INJECTOR: OnceLock<Mutex<Box<dyn Injector>>> = OnceLock::new();
 
 fn injector() -> &'static Mutex<Box<dyn Injector>> {
@@ -1032,14 +1179,78 @@ pub fn init_injector() {
     let _ = injector();
 }
 
+/// Reference-counted key holds around an inner [`Injector`].
+///
+/// Without this, `combo(&[Ctrl, B])` while L2 holds Ctrl would emit Ctrl↑
+/// and leave the OS with only Super held — breaking L2-as-PTT/mod chord.
+struct RefcountInjector {
+    inner: Box<dyn Injector>,
+    counts: HashMap<Key, u32>,
+}
+
+impl RefcountInjector {
+    fn wrap(inner: Box<dyn Injector>) -> Box<dyn Injector> {
+        Box::new(Self {
+            inner,
+            counts: HashMap::new(),
+        })
+    }
+}
+
+impl Injector for RefcountInjector {
+    fn combo(&mut self, keys: &[Key]) {
+        if keys.is_empty() {
+            return;
+        }
+        for &k in keys {
+            self.key_down(k);
+        }
+        for &k in keys.iter().rev() {
+            self.key_up(k);
+        }
+    }
+
+    fn key_down(&mut self, k: Key) {
+        let n = self.counts.entry(k).or_insert(0);
+        if *n == 0 {
+            self.inner.key_down(k);
+        }
+        *n = n.saturating_add(1);
+    }
+
+    fn key_up(&mut self, k: Key) {
+        let Some(n) = self.counts.get_mut(&k) else {
+            // Already released (or never held) — do not emit a spurious OS up.
+            return;
+        };
+        *n = n.saturating_sub(1);
+        if *n == 0 {
+            self.counts.remove(&k);
+            self.inner.key_up(k);
+        }
+    }
+
+    fn mouse_rel(&mut self, dx: i32, dy: i32) {
+        self.inner.mouse_rel(dx, dy);
+    }
+
+    fn wheel(&mut self, vertical: i32, horizontal: i32) {
+        self.inner.wheel(vertical, horizontal);
+    }
+
+    fn click(&mut self) {
+        self.inner.click();
+    }
+}
+
 #[cfg(windows)]
 fn create_injector() -> Box<dyn Injector> {
-    Box::new(WinInjector)
+    RefcountInjector::wrap(Box::new(WinInjector))
 }
 
 #[cfg(not(windows))]
 fn create_injector() -> Box<dyn Injector> {
-    match crate::platform::new_injector() {
+    let raw: Box<dyn Injector> = match crate::platform::new_injector() {
         Ok(inj) => inj,
         Err(e) => {
             log::error!("input injection unavailable: {e}");
@@ -1050,7 +1261,8 @@ fn create_injector() -> Box<dyn Injector> {
             );
             Box::new(NullInjector)
         }
-    }
+    };
+    RefcountInjector::wrap(raw)
 }
 
 /// No-op injector used when the platform injector cannot be created.
@@ -1166,6 +1378,62 @@ fn to_keys(keys: &[VKey]) -> Vec<Key> {
     keys.iter().map(|&v| to_key(v)).collect()
 }
 
+/// One step of a staged multi-key combo inject plan (pure; used by tests + executor).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ComboStep {
+    Down(Key),
+    Up(Key),
+    WaitMs(u64),
+}
+
+/// Build the inject plan for a key combo.
+///
+/// Multi-key chord (e.g. Triangle → `Ctrl+n`):
+/// ```text
+/// Ctrl↓ + n↓ → COMBO_HOLD_MS (19) → Ctrl↑ + n↑  (same order as press, no gap)
+/// ```
+/// Single key: `K↓` then immediately `K↑`.
+/// Empty: no steps.
+pub fn staged_combo_plan(keys: &[Key]) -> Vec<ComboStep> {
+    if keys.is_empty() {
+        return Vec::new();
+    }
+    let mut steps = Vec::with_capacity(keys.len() * 2 + 2);
+    for &k in keys {
+        steps.push(ComboStep::Down(k));
+    }
+    if keys.len() == 1 {
+        steps.push(ComboStep::Up(keys[0]));
+        return steps;
+    }
+    steps.push(ComboStep::WaitMs(COMBO_HOLD_MS));
+    // Release in press order with no inter-key gap (Ctrl↑ then n↑ for ctrl+n).
+    for &k in keys {
+        steps.push(ComboStep::Up(k));
+    }
+    steps
+}
+
+fn execute_staged_combo(keys: &[Key]) {
+    for step in staged_combo_plan(keys) {
+        match step {
+            ComboStep::Down(k) => {
+                injector()
+                    .lock()
+                    .expect("injector poisoned")
+                    .key_down(k);
+            }
+            ComboStep::Up(k) => {
+                injector().lock().expect("injector poisoned").key_up(k);
+            }
+            // Sleep without holding the injector mutex.
+            ComboStep::WaitMs(ms) => {
+                std::thread::sleep(std::time::Duration::from_millis(ms));
+            }
+        }
+    }
+}
+
 /// Execute an action (send keystrokes, scroll, or mouse movement/click).
 ///
 /// All key/mouse actions go through the shared [`Injector`] trait object.
@@ -1176,7 +1444,7 @@ pub fn execute_action(action: &Action) {
     match action {
         Action::KeyCombo(keys) => {
             let keys = to_keys(keys);
-            injector().lock().expect("injector poisoned").combo(&keys);
+            execute_staged_combo(&keys);
         }
         Action::KeyDown(keys) => {
             let mut inj = injector().lock().expect("injector poisoned");
@@ -1191,11 +1459,11 @@ pub fn execute_action(action: &Action) {
                 inj.key_up(to_key(v));
             }
         }
-        // Chord sequence (e.g. tmux prefix + action key): combo, 10 ms, combo.
+        // Chord sequence (e.g. tmux prefix + action key): staged combo, 10 ms, combo.
         Action::KeySequence(combos) => {
             for (i, combo) in combos.iter().enumerate() {
                 let keys = to_keys(combo);
-                injector().lock().expect("injector poisoned").combo(&keys);
+                execute_staged_combo(&keys);
                 if i < combos.len() - 1 {
                     std::thread::sleep(std::time::Duration::from_millis(10));
                 }
@@ -1286,22 +1554,45 @@ pub fn linux_enter_args(backend: LinuxBackend) -> Vec<String> {
     }
 }
 
-/// Ordered injection phases for a launcher action: always type the whole text
-/// first (one invocation, zero per-character delay), then—only when submitting—
-/// press Return. The `ENTER_DELAY_MS` guard is applied between phase 0 and phase 1
-/// by `send_launcher_text`; this pure builder captures the invocation order so it
-/// can be asserted without spawning processes.
+/// Build a pure injection plan for the **text** phase only (wtype/xdotool argv).
+///
+/// Enter/Return is **not** in this plan: after text + [`ENTER_DELAY_MS`],
+/// [`submit_enter_via_injector`] stages `Enter↓ → 10 ms → Enter↑` on uinput.
 #[cfg(target_os = "linux")]
 pub fn linux_injection_plan(
     backend: LinuxBackend,
     text: &str,
-    submit_enter: bool,
+    _submit_enter: bool,
 ) -> Vec<Vec<String>> {
-    let mut plan = vec![linux_text_args(backend, text)];
-    if submit_enter {
-        plan.push(linux_enter_args(backend));
+    vec![linux_text_args(backend, text)]
+}
+
+/// Staged Return after launcher text: `Enter↓` → [`COMBO_MAIN_RELEASE_GAP_MS`] → `Enter↑`.
+pub fn staged_enter_plan() -> Vec<ComboStep> {
+    vec![
+        ComboStep::Down(Key::Enter),
+        ComboStep::WaitMs(COMBO_MAIN_RELEASE_GAP_MS),
+        ComboStep::Up(Key::Enter),
+    ]
+}
+
+fn submit_enter_via_injector() {
+    for step in staged_enter_plan() {
+        match step {
+            ComboStep::Down(k) => {
+                injector()
+                    .lock()
+                    .expect("injector poisoned")
+                    .key_down(k);
+            }
+            ComboStep::Up(k) => {
+                injector().lock().expect("injector poisoned").key_up(k);
+            }
+            ComboStep::WaitMs(ms) => {
+                std::thread::sleep(std::time::Duration::from_millis(ms));
+            }
+        }
     }
-    plan
 }
 
 /// Spawn `prog` with `args` as discrete process arguments (never a shell string).
@@ -1309,10 +1600,6 @@ pub fn linux_injection_plan(
 /// Returns `true` if the process was spawned **and exited successfully** (exit code 0),
 /// `false` if it could not be started (e.g. the backend executable is not installed)
 /// or exited with a non-zero status (e.g. compositor rejected injection).
-///
-/// The caller's early-exit guard (`if !run_injector(..) && i == 0 { return; }`)
-/// depends on this returning `false` on non-zero exit so that a failed text batch
-/// does not lead to a spurious `Return` keystroke being sent to the focused window.
 #[cfg(target_os = "linux")]
 fn run_injector(prog: &str, args: &[String]) -> bool {
     match std::process::Command::new(prog).args(args).status() {
@@ -1331,34 +1618,42 @@ fn run_injector(prog: &str, args: &[String]) -> bool {
     }
 }
 
-/// Inject Unicode text on Linux, then optionally press Enter.
+/// Inject **literal** text on Linux, then optionally press Enter.
 ///
-/// Backend is chosen from `XDG_SESSION_TYPE`: Wayland → `wtype`, otherwise
-/// `xdotool`. Text is passed as a single discrete argument (no shell), so shell
-/// metacharacters and leading dashes have no special meaning. Best-effort: if the
-/// selected backend is not installed the call logs a warning and returns.
+/// Design (omegaG product rule):
+/// - **Do not** synthesize characters by faking US (or any) keyboard layouts
+///   through uinput. That fights the user's real xkb map and breaks `|`, `\`, `/`.
+/// - **Do** send the payload as text: `wtype` on Wayland, `xdotool type` on X11
+///   (same tools listed in the Linux installer). Install-time / detect-time
+///   binding discovery stays separate — that path reads tmux/Claude binds and
+///   maps buttons; this path only dumps a configured string into the focused app.
+///
+/// Enter (when `submit_enter`): after [`ENTER_DELAY_MS`] (16), stage
+/// `Enter↓` → [`COMBO_MAIN_RELEASE_GAP_MS`] (10) → `Enter↑` via the virtual
+/// keyboard (Return is layout-stable; text is not).
 #[cfg(target_os = "linux")]
 pub fn send_launcher_text(text: &str, submit_enter: bool) {
     let session_type = std::env::var("XDG_SESSION_TYPE").ok();
     let backend = select_backend(session_type.as_deref());
     let prog = backend.program();
 
-    // Phase 0 = whole text (one invocation, zero per-character delay);
-    // phase 1 (only when submitting) = Return, after the shared 16 ms guard.
-    for (i, phase_args) in linux_injection_plan(backend, text, submit_enter)
-        .iter()
-        .enumerate()
-    {
-        if i > 0 {
-            // Give the compositor/app time to process the typed text before Enter,
-            // so the two events don't race (shared two-phase guard, all platforms).
-            std::thread::sleep(std::time::Duration::from_millis(ENTER_DELAY_MS));
-        }
-        if !run_injector(prog, phase_args) && i == 0 {
-            // Text batch failed to spawn (backend missing) — pressing Enter alone
-            // would be meaningless, so bail before the guard/Return phase.
-            return;
-        }
+    let plan = linux_injection_plan(backend, text, submit_enter);
+    let text_ok = plan
+        .first()
+        .map(|args| run_injector(prog, args))
+        .unwrap_or(false);
+    if !text_ok {
+        log::error!(
+            "launcher: failed to inject text {text:?} via '{prog}'. \
+             Install the text injector (Wayland: `wtype`, X11: `xdotool`) — \
+             omegaG will not fake characters via uinput keycodes."
+        );
+        return;
+    }
+
+    if submit_enter {
+        std::thread::sleep(std::time::Duration::from_millis(ENTER_DELAY_MS));
+        submit_enter_via_injector();
     }
 }
 
@@ -1375,9 +1670,10 @@ pub fn send_launcher_text(_text: &str, _submit_enter: bool) {}
 #[cfg(all(test, target_os = "linux"))]
 mod linux_inject_tests {
     use super::{
-        ENTER_DELAY_MS, LinuxBackend, linux_enter_args, linux_injection_plan, linux_text_args,
-        run_injector, select_backend,
+        COMBO_MAIN_RELEASE_GAP_MS, ComboStep, ENTER_DELAY_MS, LinuxBackend, linux_enter_args,
+        linux_injection_plan, linux_text_args, run_injector, select_backend, staged_enter_plan,
     };
+    use crate::keys::Key;
 
     // ── Two-phase submit timing / ordering ────────────────────────────
 
@@ -1388,13 +1684,19 @@ mod linux_inject_tests {
     }
 
     #[test]
-    fn injection_plan_types_text_then_enter_when_submitting() {
-        // Phase order is fixed: whole text first (one invocation, zero per-char
-        // delay), then Return. Nothing precedes the text; Return is strictly last.
+    fn injection_plan_types_text_only_enter_is_uinput_staged() {
+        // Text phase only in the external-tool plan; Return is staged on uinput.
         let plan = linux_injection_plan(LinuxBackend::Wayland, "| godspeed", true);
-        assert_eq!(plan.len(), 2, "submit = two phases: text, then Return");
+        assert_eq!(plan.len(), 1, "text-only external plan; Enter via injector");
         assert_eq!(plan[0], vec!["--".to_string(), "| godspeed".to_string()]);
-        assert_eq!(plan[1], linux_enter_args(LinuxBackend::Wayland));
+        assert_eq!(
+            staged_enter_plan(),
+            vec![
+                ComboStep::Down(Key::Enter),
+                ComboStep::WaitMs(COMBO_MAIN_RELEASE_GAP_MS),
+                ComboStep::Up(Key::Enter),
+            ]
+        );
     }
 
     #[test]
@@ -1553,26 +1855,14 @@ mod linux_inject_tests {
     }
 
     #[test]
-    fn return_not_emitted_when_text_phase_exits_nonzero() {
-        // Full guard-loop regression: replays the send_launcher_text loop
-        // using `false` as the injector (always exits 1). With the fix in place,
-        // run_injector returns false → early-exit guard fires at i==0 → the
-        // Return phase is never reached.
-        //
-        // `phases_started` counts how many phases the loop body enters.
-        // Expected: 1 (only the text phase starts; Return phase is suppressed).
-        let mut phases_started = 0usize;
+    fn text_tool_failure_is_detectable_before_enter() {
+        // External text tool failure returns false — send_launcher_text then
+        // tries uinput ASCII fallback (not exercised here). Plan is text-only.
         let plan = linux_injection_plan(LinuxBackend::Wayland, "test payload", true);
-        for (i, args) in plan.iter().enumerate() {
-            phases_started += 1;
-            if !run_injector("false", args) && i == 0 {
-                // Guard fires: text batch failed, bail before Return.
-                break;
-            }
-        }
-        assert_eq!(
-            phases_started, 1,
-            "only the text phase (i=0) must start; Return phase must be suppressed on non-zero exit"
+        assert_eq!(plan.len(), 1);
+        assert!(
+            !run_injector("false", &plan[0]),
+            "failed text tool must report false so caller can skip or fall back"
         );
     }
 
@@ -1748,11 +2038,31 @@ mod tests {
     }
 
     #[test]
-    fn ps_does_nothing() {
+    fn ps_cycles_four_profiles_and_leds() {
         let mut mapper = MapperState::default();
-        let ps_press = input_with(|i| i.buttons.ps = true);
-        let actions = mapper.update(&ps_press);
-        assert!(actions.is_empty(), "PS button is unmapped");
+        assert_eq!(mapper.profile(), Profile::P1);
+        assert_eq!(mapper.profile_led_mask(), PROFILE_PLAYER_LEDS[0]);
+
+        for expected in [1u8, 2, 3, 0] {
+            let press = input_with(|i| i.buttons.ps = true);
+            let actions = mapper.update(&press);
+            assert!(
+                actions.is_empty(),
+                "profile switch is state-only (LEDs via main), no inject action"
+            );
+            assert_eq!(mapper.profile().0, expected);
+            assert_eq!(
+                mapper.profile_led_mask(),
+                PROFILE_PLAYER_LEDS[expected as usize]
+            );
+            // release PS
+            let _ = mapper.update(&input_with(|_| {}));
+        }
+        assert_eq!(
+            PROFILE_PLAYER_LEDS,
+            [0x04, 0x0A, 0x1B, 0x1F],
+            "P1 center, P2 inner two, P3 outer four, P4 all five"
+        );
     }
 
     #[test]
@@ -1901,6 +2211,7 @@ mod tests {
             (|i| i.buttons.r1 = true, vec![VKey::N]), // next window
             (|i| i.buttons.r2 = true, vec![VKey::Shift, VKey::D7]), // kill window (&)
             (|i| i.buttons.square = true, vec![VKey::C]), // new window
+            (|i| i.buttons.touchpad = true, vec![VKey::C]), // new-window -c ~ → default `c`
         ];
 
         for (setup, expected_action) in tests {
@@ -1922,11 +2233,10 @@ mod tests {
 
     #[test]
     fn tmux_unmapped_buttons_do_nothing() {
-        // These buttons are unmapped in the default tmux config
+        // Share / Options stay unmapped in ship defaults (touchpad is mapped).
         let unmapped: Vec<fn(&mut UnifiedInput)> = vec![
             |i| i.buttons.share = true,
             |i| i.buttons.options = true,
-            |i| i.buttons.touchpad = true,
         ];
 
         for setup in unmapped {
@@ -1954,15 +2264,17 @@ mod tests {
     }
 
     #[test]
-    fn l3_sends_ctrl_t() {
+    fn l3_sends_godspeed_launcher_text() {
         let mut mapper = MapperState::default();
         let input = input_with(|i| i.buttons.l3 = true);
         let actions = mapper.update(&input);
         assert!(
-            actions
-                .iter()
-                .any(|a| matches!(a, Action::KeyCombo(k) if *k == vec![VKey::Control, VKey::T])),
-            "L3 should send Ctrl+T"
+            actions.iter().any(|a| matches!(
+                a,
+                Action::LauncherText { text, enter }
+                    if text == "| godspeed" && *enter
+            )),
+            "L3 should emit launcher:godspeed (| godspeed + Enter), got: {actions:?}"
         );
     }
 
@@ -2093,13 +2405,15 @@ mod tests {
     }
 
     #[test]
-    fn touchpad_click_rising_edge() {
+    fn touchpad_click_rising_edge_when_unmapped() {
+        // Empty touchpad mapping → mouse left-click while cursor mode is on.
         let mut mapper = MapperState::default();
+        mapper.clear_touchpad_maps();
         let input = input_with_touch(500, 300, true);
         let actions = mapper.update(&input);
         assert!(
             actions.iter().any(|a| matches!(a, Action::MouseClick)),
-            "MouseClick on first press frame"
+            "MouseClick on first press frame when touchpad is unmapped"
         );
         // Hold: no second click
         let actions = mapper.update(&input);
@@ -2110,7 +2424,27 @@ mod tests {
     }
 
     #[test]
-    fn touchpad_disabled_no_actions() {
+    fn touchpad_press_default_opens_new_window_home() {
+        // Ship default: touchpad press → tmux new-window -c ~ (prefix + C).
+        let mut mapper = MapperState::default();
+        assert!(
+            mapper.active_touchpad_mapped(),
+            "default ButtonMap must map touchpad"
+        );
+        let input = input_with_touch(500, 300, true);
+        let actions = mapper.update(&input);
+        assert!(
+            actions.iter().any(|a| matches!(a, Action::KeySequence(_))),
+            "default touchpad press should emit tmux KeySequence, not MouseClick"
+        );
+        assert!(
+            !actions.iter().any(|a| matches!(a, Action::MouseClick)),
+            "mapped touchpad must not also left-click"
+        );
+    }
+
+    #[test]
+    fn touchpad_disabled_no_swipe_but_mapped_press_still_fires() {
         let mut mapper = MapperState {
             touchpad_enabled: false,
             ..Default::default()
@@ -2123,7 +2457,11 @@ mod tests {
                 .iter()
                 .any(|a| matches!(a, Action::MouseMove { .. }))
         );
-        assert!(!actions.iter().any(|a| matches!(a, Action::MouseClick)));
+        // Swipe off does not suppress a configured touchpad *button* map.
+        assert!(
+            actions.iter().any(|a| matches!(a, Action::KeySequence(_))),
+            "touchpad press mapping should work with [touchpad] enabled = false"
+        );
     }
 
     // ── Left stick mouse tests ────────────────────────────────────────
@@ -2275,14 +2613,15 @@ mod tests {
     }
 
     #[test]
-    fn touchpad_click_always_fires_in_stick_mode() {
+    fn touchpad_click_always_fires_in_stick_mode_when_unmapped() {
         let mut mapper = MapperState::default();
+        mapper.clear_touchpad_maps();
         enable_stick_mode(&mapper);
-        // Touchpad press → click must fire even in stick mode
+        // Unmapped touchpad press → click must fire even in stick mode
         let actions = mapper.update(&input_with_touch(500, 300, true));
         assert!(
             actions.iter().any(|a| matches!(a, Action::MouseClick)),
-            "Touchpad click must fire regardless of mouse mode"
+            "Unmapped touchpad click must fire regardless of mouse mode"
         );
         // But no touch movement
         assert!(
@@ -2369,6 +2708,50 @@ mod tests {
     }
 
     #[test]
+    fn staged_combo_ctrl_n_timing_for_triangle() {
+        // Triangle → ctrl+n :
+        // Ctrl↓ + n↓ → 19ms → Ctrl↑ + n↑
+        let plan = staged_combo_plan(&[Key::Ctrl, Key::Char('n')]);
+        assert_eq!(
+            plan,
+            vec![
+                ComboStep::Down(Key::Ctrl),
+                ComboStep::Down(Key::Char('n')),
+                ComboStep::WaitMs(COMBO_HOLD_MS),
+                ComboStep::Up(Key::Ctrl),
+                ComboStep::Up(Key::Char('n')),
+            ]
+        );
+        assert_eq!(COMBO_HOLD_MS, 19);
+    }
+
+    #[test]
+    fn staged_combo_single_key_no_waits() {
+        let plan = staged_combo_plan(&[Key::Enter]);
+        assert_eq!(
+            plan,
+            vec![ComboStep::Down(Key::Enter), ComboStep::Up(Key::Enter)]
+        );
+    }
+
+    #[test]
+    fn staged_combo_ctrl_shift_b_hold_then_press_order_release() {
+        let plan = staged_combo_plan(&[Key::Ctrl, Key::Shift, Key::Char('b')]);
+        assert_eq!(
+            plan,
+            vec![
+                ComboStep::Down(Key::Ctrl),
+                ComboStep::Down(Key::Shift),
+                ComboStep::Down(Key::Char('b')),
+                ComboStep::WaitMs(COMBO_HOLD_MS),
+                ComboStep::Up(Key::Ctrl),
+                ComboStep::Up(Key::Shift),
+                ComboStep::Up(Key::Char('b')),
+            ]
+        );
+    }
+
+    #[test]
     fn shifted_char_combo_keeps_explicit_shift() {
         // Legacy tmux default "kill-window" = Shift+7 ('&'): the shift must
         // stay an explicit key so Windows VK and Linux evdev paths agree.
@@ -2389,5 +2772,74 @@ mod tests {
         // Hardcoded fallback tmux prefix is Ctrl+B on every platform.
         let lowered = to_keys(&[VKey::Control, VKey::B]);
         assert_eq!(lowered, vec![Key::Ctrl, Key::Char('b')]);
+    }
+
+    #[test]
+    fn force_release_holds_emits_l2_keyup_once() {
+        let mut state = MapperState::default();
+        state.prev.l2 = true;
+        let first = state.force_release_holds();
+        assert_eq!(first.len(), 1);
+        assert!(matches!(
+            &first[0],
+            Action::KeyUp(keys) if keys.as_slice() == [VKey::Control, VKey::Win]
+        ));
+        assert!(state.force_release_holds().is_empty());
+    }
+
+    /// Recording injector for pure refcount tests (no OS / uinput).
+    struct RecInjector {
+        down: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<Key>>>,
+    }
+
+    impl Injector for RecInjector {
+        fn combo(&mut self, keys: &[Key]) {
+            for &k in keys {
+                self.key_down(k);
+            }
+            for &k in keys.iter().rev() {
+                self.key_up(k);
+            }
+        }
+        fn key_down(&mut self, k: Key) {
+            self.down.lock().unwrap().insert(k);
+        }
+        fn key_up(&mut self, k: Key) {
+            self.down.lock().unwrap().remove(&k);
+        }
+        fn mouse_rel(&mut self, _dx: i32, _dy: i32) {}
+        fn wheel(&mut self, _v: i32, _h: i32) {}
+        fn click(&mut self) {}
+    }
+
+    #[test]
+    fn refcount_injector_keeps_l2_ctrl_through_nested_combo() {
+        let held = std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashSet::new()));
+        let mut inj = RefcountInjector {
+            inner: Box::new(RecInjector {
+                down: std::sync::Arc::clone(&held),
+            }),
+            counts: HashMap::new(),
+        };
+        // L2 hold
+        inj.key_down(Key::Ctrl);
+        inj.key_down(Key::Super);
+        // Nested tmux-style combo that also uses Ctrl
+        inj.combo(&[Key::Ctrl, Key::Char('b')]);
+        {
+            let down = held.lock().unwrap();
+            assert!(
+                down.contains(&Key::Ctrl),
+                "Ctrl must stay down after nested combo while L2 held"
+            );
+            assert!(down.contains(&Key::Super));
+            assert!(!down.contains(&Key::Char('b')));
+        }
+        // L2 release
+        inj.key_up(Key::Ctrl);
+        inj.key_up(Key::Super);
+        let down = held.lock().unwrap();
+        assert!(!down.contains(&Key::Ctrl));
+        assert!(!down.contains(&Key::Super));
     }
 }

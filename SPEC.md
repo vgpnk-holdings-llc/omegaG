@@ -16,7 +16,7 @@ OS calls — never to change behavior.
 ```toml
 [package]
 name = "ds4cc"
-version = "3.1.0"
+version = "3.2.0"
 edition = "2024"
 description = "Daemon bridging DualSense/DS4 controllers with AI coding agents"
 
@@ -250,7 +250,7 @@ pub fn log_dir() -> PathBuf;                    // $XDG_STATE_HOME/ds4cc | ~/.lo
 - NEW optional `[linux]` section NOT allowed — keep schema OS-neutral.
 
 ## 9. CLI flags (C2)
-`--help` (print usage+flags, exit 0), `--version` (print "ds4cc 3.1.0", exit 0),
+`--help` (print usage+flags, exit 0), `--version` (print "ds4cc 3.2.0", exit 0),
 `--verbose` (debug logging), `--no-tray` (skip tray; also auto-skip if D-Bus session bus
 unreachable — log info). These make headless smoke (verifier G8) possible.
 
