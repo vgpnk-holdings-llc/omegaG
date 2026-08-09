@@ -70,6 +70,9 @@ Name: "autostart";  Description: "Start {#MyAppName} automatically when Windows 
 ; Desktop shortcut: on by default, easy to opt out
 Name: "desktopicon"; Description: "Create a desktop shortcut"; \
                      GroupDescription: "Additional icons:"; Flags: checkedonce
+; LordOfMice hidusbf: ON by default — uncheck if you do not want the download page
+Name: "lordofmice"; Description: "Open LordOfMice hidusbf (USB HID buffering / overclock) after install — recommended for DualSense/DS4 input lag"; \
+                    GroupDescription: "Controller input (optional):"; Flags: checkedonce
 ; Wispr Flow: off by default
 Name: "wisprflow";  Description: "Open the Wispr Flow download page after install (required for Speech-to-Text)"; \
                     GroupDescription: "Speech-to-Text:"; Flags: unchecked
@@ -106,6 +109,12 @@ Filename: "{app}\{#MyAppExe}"; \
   Description: "Launch {#MyAppName} now"; \
   Flags: nowait postinstall skipifsilent runhidden
 
+; Open LordOfMice hidusbf project — only if the task was left checked (opt-out)
+Filename: "{#LordOfMiceURL}"; \
+  Description: "Open LordOfMice hidusbf (USB HID buffering / overclock)"; \
+  Flags: shellexec postinstall skipifsilent; \
+  Tasks: lordofmice
+
 ; Open Wispr Flow download page — only if the task was checked
 Filename: "{#WisprURL}"; \
   Description: "Open Wispr Flow download page"; \
@@ -114,6 +123,9 @@ Filename: "{#WisprURL}"; \
 
 ; ── Installer logic (Pascal) ───────────────────────────────────────────
 [Code]
+
+var
+  LordOfMiceInfoShown: Boolean;
 
 { Check for WSL2 — needed for Tmux and Codex features.
   Not a hard requirement: the app works fine without it for basic mapping. }
@@ -151,8 +163,33 @@ begin
   Result := '';
 end;
 
+{ Explain LordOfMice once when the user reaches the Select Tasks page.
+  Task is checked by default; they uncheck if they do not want it. }
+procedure CurPageChanged(CurPageID: Integer);
+begin
+  if (CurPageID = wpSelectTasks) and (not LordOfMiceInfoShown) then
+  begin
+    LordOfMiceInfoShown := True;
+    MsgBox(
+      'Optional: LordOfMice hidusbf (USB HID buffering / overclock)' + #13#10 + #13#10 +
+      'Highly recommended for DualShock 4 and DualSense on Windows.' + #13#10 +
+      'It is a net positive for gaming and for low-latency controller input' + #13#10 +
+      'in general — including omegaG / DS4CC shortcut mapping.' + #13#10 + #13#10 +
+      'Ballpark (USB HID path / community measurements):' + #13#10 +
+      '  · DualShock 4: ~200 ms class input lag without overclock tooling' + #13#10 +
+      '  · DualSense @ up to 8000 Hz polling: on the order of ~0.25 ms' + #13#10 +
+      '    with buffering / overclock configured correctly' + #13#10 + #13#10 +
+      'We do not bundle the driver. If you leave the next checkbox ON, Finish' + #13#10 +
+      'will open the official LordOfMice/hidusbf project so you can install it.' + #13#10 +
+      'Uncheck that task if you do not want this.' + #13#10 + #13#10 +
+      'Third-party kernel filter: review the project and install only if you trust it.',
+      mbInformation, MB_OK);
+  end;
+end;
+
 procedure InitializeWizard();
 begin
+  LordOfMiceInfoShown := False;
   if not IsWSL2Present() then
   begin
     MsgBox(
