@@ -140,6 +140,10 @@ A button value can be:
 3. **A direct key combo** — `"ctrl+g"`, `"Shift+7"`
 4. **Empty string** — unmapped
 
+Built-in launcher names available without defining `[launchers.*]`:
+- `launcher:godspeed` → types `| godspeed` and presses Enter
+- `launcher:colulossus` → types `COLULOSSUS` (no auto-submit)
+
 ---
 
 ## Configuration
@@ -549,4 +553,3 @@ app_command = ""   # e.g. "wispr-flow" — adds "Open voice app" to the tray
 ## License
 
 MIT
-

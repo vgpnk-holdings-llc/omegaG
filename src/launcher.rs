@@ -14,7 +14,8 @@
 ///
 /// | Name        | Text            | Enter | Notes                     |
 /// |-------------|-----------------|-------|---------------------------|
-/// | `godspeed`  | `\| godspeed`   | yes   | Mirrors claude-launcher.  |
+/// | `godspeed`   | `\| godspeed`   | yes   | Mirrors claude-launcher.  |
+/// | `colulossus` | `COLULOSSUS`    | no    | Signature macro.           |
 ///
 /// Stock default: **L3** maps to `launcher:godspeed`. Other buttons stay free.
 /// Override or reassign:
@@ -45,6 +46,11 @@ pub fn builtin_action(name: &str) -> Option<LauncherAction> {
         "godspeed" => Some(LauncherAction {
             text: "| godspeed".to_string(),
             enter: true,
+        }),
+        // Types the COLULOSSUS signature without auto-submit.
+        "colulossus" => Some(LauncherAction {
+            text: "COLULOSSUS".to_string(),
+            enter: false,
         }),
         _ => None,
     }
@@ -178,6 +184,15 @@ mod tests {
         assert!(builtin_action("").is_none());
     }
 
+    #[test]
+    fn builtin_colulossus_text_without_enter() {
+        let a = builtin_action("colulossus").expect("colulossus must be a built-in");
+        assert_eq!(a.text, "COLULOSSUS");
+        assert!(!a.enter, "colulossus built-in must not auto-submit");
+        assert!(a.text.is_ascii());
+        assert!(!a.text.contains('\n'));
+    }
+
     // ── Parsing: launcher: prefix ─────────────────────────────────────
 
     #[test]
@@ -220,6 +235,17 @@ mod tests {
         let (text, enter) = launcher_text(&actions).expect("built-in must resolve without config");
         assert_eq!(text, "| godspeed");
         assert!(enter);
+    }
+
+    #[test]
+    fn builtin_colulossus_works_without_config_entry() {
+        let mut cfg = cfg_with_button("share", "launcher:colulossus");
+        cfg.launchers.remove("colulossus");
+        let mut mapper = mapper_from(&cfg);
+        let actions = mapper.update(&press("share"));
+        let (text, enter) = launcher_text(&actions).expect("built-in must resolve without config");
+        assert_eq!(text, "COLULOSSUS");
+        assert!(!enter);
     }
 
     // ── Unicode text ──────────────────────────────────────────────────

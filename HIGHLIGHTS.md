@@ -52,6 +52,7 @@ Injection is a **direct clone of claude-launcher's two-phase submit**:
 | Name | Text | Enter | Notes |
 |------|------|-------|-------|
 | `godspeed` | `\| godspeed` | yes | Matches claude-launcher exactly |
+| `colulossus` | `COLULOSSUS` | no | Signature macro, no auto-submit |
 
 Built-ins are **unassigned** — no default button fires them. Wire one up:
 
