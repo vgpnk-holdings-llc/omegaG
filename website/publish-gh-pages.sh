@@ -11,6 +11,8 @@ trap 'rm -rf "$STAGE"' EXIT
 cp website/index.html website/style.css website/main.js "$STAGE/"
 cp -a website/assets "$STAGE/assets"
 [[ -f website/robots.txt ]] && cp website/robots.txt "$STAGE/"
+[[ -f website/sitemap.xml ]] && cp website/sitemap.xml "$STAGE/"
+[[ -f website/site.webmanifest ]] && cp website/site.webmanifest "$STAGE/"
 touch "$STAGE/.nojekyll"
 {
   git rev-parse HEAD
