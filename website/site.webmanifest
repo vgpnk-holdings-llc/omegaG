@@ -1,0 +1,13 @@
+{
+  "name": "omegaG",
+  "short_name": "omegaG",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "background_color": "#0a0a0b",
+  "theme_color": "#0a0a0b",
+  "icons": [
+    { "src": "assets/controller-mark.png", "sizes": "128x128", "type": "image/png" },
+    { "src": "assets/apple-touch-icon.png", "sizes": "180x180", "type": "image/png" }
+  ]
+}

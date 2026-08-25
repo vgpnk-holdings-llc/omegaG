@@ -16,7 +16,9 @@ assert.equal((html.match(/<button class="chip/g) || []).length, 6);
 assert.equal((html.match(/<button class="chip[^>]*type="button"/g) || []).length, 6);
 assert.match(html, /class="nav-brand"[\s\S]*class="nav-word">omegaG</);
 assert.doesNotMatch(css, /\.nav-word\s*\{[^}]*display:\s*none/s);
+assert.doesNotMatch(css, /\.nav-links a:last-child/);
 assert.doesNotMatch(css, /\.nav-links a:nth-child/);
+assert.match(css, /\.nav-links a\.nav-ext\s*\{[^}]*display:\s*none/s);
 for (const anchor of ['#lightbar', '#layer', '#specs']) assert.match(html, new RegExp(`href="${anchor}"`));
 assert.doesNotMatch(js, /mouseenter|addEventListener\('focus'/);
 assert.doesNotMatch(js, /classList\.toggle\('is-sel'/);
@@ -31,16 +33,19 @@ assert.match(html, /<b>Touchpad press<\/b>left-click on DualSense and DS4/);
 assert.match(html, /optional Windows-only Codex runtime enabled/);
 assert.match(html, /website illustration[\s\S]*not a live controller or HID connection/);
 assert.match(html, /assets\/hero-journey\.png/);
-assert.match(html, /class="hero-art"/);
+assert.match(html, /class="device-art device-art--badge"/);
+assert.doesNotMatch(html, /class="hero-art"/);
+assert.doesNotMatch(html, /fonts\.googleapis\.com/);
 // Badge branding only — allow "Claude Code" product mentions in body copy
 assert.doesNotMatch(html, /Claude DS4\/5|["']CLAUDE["']|\bCLAUDE\b(?!\s*Code)/);
-assert.match(html, /<meta property="og:image" content="https:\/\/veigapunk\.github\.io\/omegag-site\/assets\/hero-journey\.png">/);
+assert.match(html, /<meta property="og:image" content="https:\/\/veigapunk\.github\.io\/omegag-site\/assets\/masterpiece\.png">/);
 assert.match(html, /<meta property="og:url" content="https:\/\/veigapunk\.github\.io\/omegag-site\/">/);
 assert.match(html, /rel="canonical" href="https:\/\/veigapunk\.github\.io\/omegag-site\/"/);
-assert.match(html, /masterpiece\.png"[^>]*width="1920" height="840"[^>]*loading="lazy"/);
+assert.match(html, /masterpiece\.png"[^>]*width="1920" height="840"[^>]*fetchpriority="high"/);
 assert.match(html, /controller-mark\.png"[^>]*width="128" height="128"/);
-assert.match(css, /\.hero-art\s*\{[^}]*max-width:\s*100%[^}]*height:\s*auto/s);
 assert.match(css, /\.device-art\s*\{[^}]*max-width:\s*100%[^}]*height:\s*auto/s);
+assert.match(css, /\.lightbar\.pulsing\s*\{[^}]*animation:\s*none/s);
+assert.match(css, /\.etch\s*\{[^}]*rgba\(244,\s*244,\s*242,\s*0\.92\)/s);
 assert.match(html, />Upstream DS4CC releases<\/a>/);
 assert.match(html, /Package and binary name remain <code>ds4cc<\/code>/);
 assert.match(html, /Same package and binary \(<code>ds4cc<\/code>\)/);
@@ -53,7 +58,8 @@ assert.match(html, /href="https:\/\/github\.com\/vgpnk-holdings-llc\/omegaG\/blo
 assert.match(html, /name="theme-color" content="#0a0a0b"/);
 assert.match(html, /launcher:&lt;name&gt;/);
 assert.match(html, /No default button is pre-wired to a launcher/);
-// Nav GitHub link uses the same indent as sibling anchors (no stray leading space-only lag)
+assert.match(html, /class="nav-ext" href="https:\/\/ds4cc\.com\/"/);
+// Nav GitHub link uses the same indent as sibling anchors
 assert.match(html, /<div class="nav-links">\n {6}<a href="#lightbar">[\s\S]*?\n {6}<a href="https:\/\/github\.com\/vgpnk-holdings-llc\/omegaG"/);
 
 for (const [, ref] of html.matchAll(/(?:src|href)="([^"#]+)"/g)) {
@@ -63,6 +69,7 @@ for (const [, ref] of html.matchAll(/(?:src|href)="([^"#]+)"/g)) {
 }
 assert.ok(!fs.existsSync(path.join(root, 'assets/logo-badge.png')), 'unused logo-badge.png remains');
 assert.ok(fs.existsSync(path.join(root, 'assets/hero-journey.png')), 'omegaG hero badge missing');
+assert.ok(fs.existsSync(path.join(root, 'assets/masterpiece.webp')), 'masterpiece webp missing');
 
 class ClassList {
   constructor(names = []) { this.names = new Set(names); }

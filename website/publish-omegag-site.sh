@@ -14,6 +14,8 @@ trap 'rm -rf "$STAGE" "$WORK"' EXIT
 cp website/index.html website/style.css website/main.js "$STAGE/"
 cp -a website/assets "$STAGE/assets"
 [[ -f website/robots.txt ]] && cp website/robots.txt "$STAGE/"
+[[ -f website/sitemap.xml ]] && cp website/sitemap.xml "$STAGE/"
+[[ -f website/site.webmanifest ]] && cp website/site.webmanifest "$STAGE/"
 touch "$STAGE/.nojekyll"
 {
   git rev-parse HEAD
@@ -34,7 +36,7 @@ PY
 git clone --depth 1 "git@github.com:VeigaPunk/omegag-site.git" "$WORK/repo"
 cd "$WORK/repo"
 # Preserve workflows; replace site assets only
-for f in index.html style.css main.js robots.txt .nojekyll .build-id; do
+for f in index.html style.css main.js robots.txt sitemap.xml site.webmanifest .nojekyll .build-id; do
   [[ -f "$STAGE/$f" ]] && cp "$STAGE/$f" .
 done
 rm -rf assets
@@ -42,6 +44,8 @@ cp -a "$STAGE/assets" assets
 # keep .github/ — stage site paths only
 git add index.html style.css main.js assets .nojekyll .build-id
 [[ -f robots.txt ]] && git add robots.txt
+[[ -f sitemap.xml ]] && git add sitemap.xml
+[[ -f site.webmanifest ]] && git add site.webmanifest
 
 if git diff --cached --quiet; then
   echo "omegag-site already up to date"
