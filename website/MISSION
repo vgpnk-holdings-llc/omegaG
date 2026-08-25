@@ -1,6 +1,6 @@
-STATUS=OPEN
+STATUS=CLOSED
 SCOPE=omegaG marketing website polish — SoT sync + first-viewport + a11y
-UPDATED_AT=2026-08-25
+CLOSED_AT=2026-08-25
 PRIMARY=https://veigapunk.github.io/omegag-site/
 ORG=https://vgpnk-holdings-llc.github.io/omegaG/
 SOURCE=website/
@@ -8,4 +8,4 @@ GATE=node website/checks.mjs && bash website/verify-live.sh
 PUBLISH=bash website/publish-all.sh
 KIMI=optional lag only https://ds4cc-proto.kimi.page/
 PLAZIR=do not touch https://veigapunk.github.io/
-NOTES=Primary live was ahead of local website/; synced then polished (single hero visual, CTAs in fold, nav-ext hide, etch contrast, reduced-motion lightbar, no Google Fonts). Re-close after publish+verify.
+NOTES=Polished 2026-08-25: single vibe hero, CTAs in fold, .nav-ext, etch AA, reduced-motion lightbar, system fonts, webp assets. Primary+org verify PASS; kimi lag expected.
